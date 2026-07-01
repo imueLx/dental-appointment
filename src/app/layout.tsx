@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Footer } from "@/components/layout/footer";
 import { Header } from "@/components/layout/header";
+import { SchedulerChatWidget } from "@/components/chat/scheduler-chat-widget";
 import { CLINIC } from "@/lib/constants";
 import "./globals.css";
 
@@ -42,6 +43,7 @@ export default function RootLayout({
           <Header />
           <main className="flex-1">{children}</main>
           <Footer />
+          <SchedulerChatWidget />
           <Toaster richColors position="top-center" />
         </TooltipProvider>
       </body>

@@ -127,6 +127,17 @@ export function BookingDialog({
     });
   }, [open, appointmentDate, startHour, form]);
 
+  useEffect(() => {
+    if (open) {
+      document.body.dataset.bookingOpen = "true";
+    } else {
+      delete document.body.dataset.bookingOpen;
+    }
+    return () => {
+      delete document.body.dataset.bookingOpen;
+    };
+  }, [open]);
+
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) setStep("form");
     onOpenChange(nextOpen);

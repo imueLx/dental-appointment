@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppointments } from "@/lib/appointments";
-import { createServiceClient } from "@/lib/supabase/admin";
-import { bookingSchema, bookingToDbRow } from "@/lib/validators";
+import {
+  createAppointment,
+  findAppointmentsByPhone,
+} from "@/lib/appointment-service";
 import { parseTimeToHour } from "@/lib/slots";
 
 function verifyApiKey(request: NextRequest): boolean {
@@ -17,12 +19,27 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = request.nextUrl;
+  const phone = searchParams.get("phone");
+
+  if (phone) {
+    try {
+      const upcomingOnly = searchParams.get("upcomingOnly") !== "false";
+      const appointments = await findAppointmentsByPhone(phone, { upcomingOnly });
+      return NextResponse.json({ appointments });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Failed to fetch" },
+        { status: 500 }
+      );
+    }
+  }
+
   const from = searchParams.get("from");
   const to = searchParams.get("to");
 
   if (!from || !to) {
     return NextResponse.json(
-      { error: "Missing required query params: from, to" },
+      { error: "Missing required query params: from, to (or phone)" },
       { status: 400 }
     );
   }
@@ -49,38 +66,29 @@ export async function POST(request: NextRequest) {
       body.startHour ??
       (body.startTime ? parseTimeToHour(body.startTime) : undefined);
 
-    const parsed = bookingSchema.safeParse({
-      ...body,
-      startHour,
-    });
+    const result = await createAppointment(
+      {
+        ...body,
+        startHour,
+      },
+      { slotIso: body.slotIso }
+    );
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid data" },
-        { status: 400 }
-      );
+    if (!result.success) {
+      const status = result.error.includes("just taken") ? 409 : 400;
+      return NextResponse.json({ error: result.error }, { status });
     }
 
-    const supabase = createServiceClient();
-    const row = bookingToDbRow(parsed.data);
-
-    const { data, error } = await supabase
-      .from("appointments")
-      .insert(row)
-      .select()
-      .single();
-
-    if (error) {
-      if (error.code === "23505") {
-        return NextResponse.json(
-          { error: "Slot already booked" },
-          { status: 409 }
-        );
-      }
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ appointment: data }, { status: 201 });
+    return NextResponse.json(
+      {
+        appointment: {
+          id: result.id,
+          calSynced: result.calSynced,
+          calBookingUid: result.calBookingUid,
+        },
+      },
+      { status: 201 }
+    );
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

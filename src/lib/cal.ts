@@ -201,11 +201,17 @@ export function buildCalBookingFieldResponses(
   };
 }
 
+export interface CalBookingResult {
+  ok: boolean;
+  uid?: string;
+  error?: string;
+}
+
 /** Create a booking on Cal.com (syncs your Cal calendar). */
 export async function createCalBooking(
   parsed: ParsedCalLink,
   params: CreateCalBookingParams
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<CalBookingResult> {
   const apiKey = getCalApiKey();
   if (!apiKey) {
     return { ok: false, error: "CAL_API_KEY not set" };
@@ -261,7 +267,96 @@ export async function createCalBooking(
     return { ok: false, error: message };
   }
 
+  try {
+    const json = (await res.json()) as {
+      data?: { uid?: string };
+    };
+    return { ok: true, uid: json.data?.uid };
+  } catch {
+    return { ok: true };
+  }
+}
+
+/** Cancel a booking on Cal.com by UID. */
+export async function cancelCalBooking(
+  uid: string,
+  cancellationReason = "Cancelled via BrightSmile scheduler"
+): Promise<{ ok: boolean; error?: string }> {
+  const apiKey = getCalApiKey();
+  if (!apiKey) {
+    return { ok: false, error: "CAL_API_KEY not set" };
+  }
+
+  const res = await fetch(
+    `https://api.cal.com/v2/bookings/${encodeURIComponent(uid)}/cancel`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "cal-api-version": "2024-08-13",
+      },
+      body: JSON.stringify({ cancellationReason }),
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("Cal.com cancel booking error:", res.status, body);
+    return { ok: false, error: `Cal cancel failed (${res.status})` };
+  }
+
   return { ok: true };
+}
+
+/** Reschedule a booking on Cal.com by UID. Returns new booking UID if provided. */
+export async function rescheduleCalBooking(
+  uid: string,
+  start: string,
+  rescheduleReason = "Rescheduled via BrightSmile scheduler"
+): Promise<CalBookingResult> {
+  const apiKey = getCalApiKey();
+  if (!apiKey) {
+    return { ok: false, error: "CAL_API_KEY not set" };
+  }
+
+  const res = await fetch(
+    `https://api.cal.com/v2/bookings/${encodeURIComponent(uid)}/reschedule`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "cal-api-version": "2024-08-13",
+      },
+      body: JSON.stringify({ start, rescheduleReason }),
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("Cal.com reschedule booking error:", res.status, body);
+    let message = "Could not reschedule on calendar. Please choose another slot.";
+    try {
+      const json = JSON.parse(body) as { error?: { message?: string } };
+      if (json.error?.message) message = json.error.message;
+    } catch {
+      // use default
+    }
+    return { ok: false, error: message };
+  }
+
+  try {
+    const json = (await res.json()) as {
+      data?: { uid?: string; rescheduledToUid?: string };
+    };
+    return {
+      ok: true,
+      uid: json.data?.rescheduledToUid ?? json.data?.uid,
+    };
+  } catch {
+    return { ok: true };
+  }
 }
 
 export const BOOKING_CONFIRMED_EVENT = "dental:booking-confirmed";
