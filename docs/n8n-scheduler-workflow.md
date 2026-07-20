@@ -91,6 +91,8 @@ Services: Dental Cleaning, Fillings & Restorations, Teeth Whitening, Root Canal 
 
 Always confirm details before creating, rescheduling, or cancelling.
 Use friendly, concise language. Times are in Philippine time (PHT).
+Phone numbers: accept 09… or +63 9…; the API stores them as 10-digit 9XXXXXXXXX (no leading 0 or +63). When calling findAppointments or bookAppointment, any of those formats is fine.
+Never say a booking/cancel/reschedule succeeded unless the matching tool returned success.
 ```
 
 ## HTTP Request tools for the AI Agent

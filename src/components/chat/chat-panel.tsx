@@ -18,6 +18,31 @@ const WELCOME_MESSAGE: ChatMessageData = {
     "Hi! I'm BrightSmile's AI scheduler. I can check available dates and times, book a new visit, or help you reschedule or cancel — all in this chat.\n\nWhat would you like to do today?",
 };
 
+const SESSION_ID_KEY = "scheduler-chat-session-id";
+const MESSAGES_KEY = "scheduler-chat-messages";
+
+function loadStoredMessages(): ChatMessageData[] {
+  if (typeof window === "undefined") return [WELCOME_MESSAGE];
+  try {
+    const raw = sessionStorage.getItem(MESSAGES_KEY);
+    if (!raw) return [WELCOME_MESSAGE];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return [WELCOME_MESSAGE];
+    const valid = parsed.filter(
+      (m): m is ChatMessageData =>
+        !!m &&
+        typeof m === "object" &&
+        typeof (m as ChatMessageData).id === "string" &&
+        typeof (m as ChatMessageData).content === "string" &&
+        ((m as ChatMessageData).role === "user" ||
+          (m as ChatMessageData).role === "assistant")
+    );
+    return valid.length > 0 ? valid : [WELCOME_MESSAGE];
+  } catch {
+    return [WELCOME_MESSAGE];
+  }
+}
+
 const QUICK_PROMPTS = [
   {
     label: "Book appointment",
@@ -51,7 +76,7 @@ function createId() {
 }
 
 export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessageData[]>([WELCOME_MESSAGE]);
+  const [messages, setMessages] = useState<ChatMessageData[]>(loadStoredMessages);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -62,15 +87,23 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
     messages.length === 1 && messages[0]?.id === "welcome" && !isLoading;
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("scheduler-chat-session-id");
+    const stored = sessionStorage.getItem(SESSION_ID_KEY);
     if (stored) {
       setSessionId(stored);
       return;
     }
     const id = crypto.randomUUID();
-    sessionStorage.setItem("scheduler-chat-session-id", id);
+    sessionStorage.setItem(SESSION_ID_KEY, id);
     setSessionId(id);
   }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
+    } catch {
+      // ignore quota / private mode failures
+    }
+  }, [messages]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({

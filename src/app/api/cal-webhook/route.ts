@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getClinicTimeZone } from "@/lib/cal";
+import { normalizePhMobile } from "@/lib/phone";
 import { hourToTimeString, SLOT_HOURS } from "@/lib/slots";
 import { sendBookingConfirmationEmail } from "@/lib/email";
 
@@ -134,11 +135,13 @@ export async function POST(request: NextRequest) {
     responseValue(payload.responses, "name") ||
     "Cal.com guest";
   const patientEmail = attendee?.email?.trim() || "";
-  const patientPhone =
+  const patientPhoneRaw =
     responseValue(payload.responses, "phone") ||
     responseValue(payload.responses, "Phone") ||
     responseValue(payload.responses, "smsReminderNumber") ||
     "";
+  const patientPhone =
+    normalizePhMobile(patientPhoneRaw) ?? patientPhoneRaw.replace(/\D/g, "");
   const service =
     payload.metadata?.service ||
     payload.title ||

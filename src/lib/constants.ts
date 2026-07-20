@@ -5,7 +5,7 @@ export const CLINIC = {
   name: "BrightSmile Dental",
   tagline: "Modern dentistry for confident smiles",
   phone: "+63 917 123 4567",
-  phonePlaceholder: "+63 917 123 4567",
+  phonePlaceholder: "0917 123 4567",
   email: "hello@brightsmile.ph",
   address: "Unit 502, Ayala Triangle Gardens Tower 2",
   city: "Makati City, Metro Manila 1226",

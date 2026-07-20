@@ -308,6 +308,9 @@ export function BookingDialog({
                               {...field}
                             />
                           </FormControl>
+                          <p className="text-xs text-muted-foreground">
+                            PH mobile only — 09… or +63 9… (saved as 9XXXXXXXXX)
+                          </p>
                           <FormMessage />
                         </FormItem>
                       )}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CLINIC_LOCATIONS, SERVICE_NAMES, getClinicLocationById } from "@/lib/constants";
+import { normalizePhMobile } from "@/lib/phone";
 import { SLOT_HOURS, hourToTimeString } from "@/lib/slots";
 
 const CLINIC_LOCATION_IDS = CLINIC_LOCATIONS.map((l) => l.id) as [
@@ -25,8 +26,12 @@ export const bookingSchema = z.object({
   ]),
   patientPhone: z
     .string()
-    .min(10, "Enter a valid Philippine phone number")
-    .regex(/^\+?[\d\s\-()]+$/, "Invalid phone number"),
+    .trim()
+    .min(10, "Enter a valid Philippine mobile number")
+    .transform((value) => normalizePhMobile(value) ?? "")
+    .refine((value) => /^9\d{9}$/.test(value), {
+      message: "Use a PH mobile: 09XXXXXXXXX or +63 9XXXXXXXXX",
+    }),
   service: z.enum(SERVICE_NAMES as [string, ...string[]], {
     message: "Please select a service",
   }),

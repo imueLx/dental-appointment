@@ -173,6 +173,8 @@ export interface CreateCalBookingParams {
   name: string;
   email: string;
   clinicCalValue: string;
+  /** Physical address shown as the Cal.com meeting location (not Google Meet). */
+  clinicAddress?: string;
   phone?: string;
   timeZone?: string;
   metadata?: Record<string, string>;
@@ -199,6 +201,22 @@ export function buildCalBookingFieldResponses(
     ...envFields,
     ...extra,
   };
+}
+
+/**
+ * Prefer in-person clinic address over Google Meet / Cal Video.
+ * Requires the Cal.com event type to allow Address / Attendee address
+ * (or “Somewhere else”) — not Google Meet only.
+ */
+function buildCalBookingLocation(clinicAddress?: string) {
+  const address = clinicAddress?.trim();
+  if (address) {
+    return {
+      type: "attendeeAddress" as const,
+      address,
+    };
+  }
+  return { type: "address" as const };
 }
 
 export interface CalBookingResult {
@@ -234,6 +252,7 @@ export async function createCalBooking(
         timeZone: params.timeZone ?? getClinicTimeZone(),
         ...(params.phone ? { phoneNumber: params.phone } : {}),
       },
+      location: buildCalBookingLocation(params.clinicAddress),
       bookingFieldsResponses: buildCalBookingFieldResponses(
         params.clinicCalValue,
         params.bookingFieldsResponses
@@ -255,9 +274,12 @@ export async function createCalBooking(
       if (calMessage?.includes("Missing required booking field")) {
         message =
           "Calendar setup issue — a required booking field is missing. Please contact the clinic.";
-      } else if (calMessage?.includes("Invalid option")) {
+      } else if (
+        calMessage?.includes("Invalid option") ||
+        calMessage?.toLowerCase().includes("location")
+      ) {
         message =
-          "Please select a valid clinic branch — the calendar location does not match.";
+          "Calendar location mismatch — enable In-person / Address on the Cal.com event type (not Google Meet only).";
       } else if (calMessage) {
         message = calMessage;
       }

@@ -14,6 +14,12 @@ import {
   getSupabaseUrl,
 } from "@/lib/env";
 import { getBookedSlots } from "@/lib/appointments";
+import {
+  normalizePhMobile,
+  phoneDigitsOnly,
+  phoneLookupSuffix,
+  toPhE164,
+} from "@/lib/phone";
 import { createServiceClient } from "@/lib/supabase/admin";
 import {
   formatDateKey,
@@ -55,12 +61,14 @@ function attendeeEmailFromPatient(
   patientPhone: string
 ): string {
   if (patientEmail?.trim()) return patientEmail.trim();
-  const digits = patientPhone.replace(/\D/g, "");
+  const digits =
+    normalizePhMobile(patientPhone) ?? phoneDigitsOnly(patientPhone);
   return `booking+${digits}@bookings.brightsmile.ph`;
 }
 
+/** @deprecated Prefer normalizePhMobile — kept for existing imports. */
 export function normalizePhoneDigits(phone: string): string {
-  return phone.replace(/\D/g, "");
+  return normalizePhMobile(phone) ?? phoneDigitsOnly(phone);
 }
 
 function isConfigured(): boolean {
@@ -125,7 +133,8 @@ export async function createAppointment(
         booking.patientPhone
       ),
       clinicCalValue: branch.calValue,
-      phone: booking.patientPhone,
+      clinicAddress: branch.address,
+      phone: toPhE164(booking.patientPhone),
       metadata: {
         service: booking.service,
         source: CLINIC.name,
@@ -196,10 +205,9 @@ export async function findAppointmentsByPhone(
   phone: string,
   options?: { upcomingOnly?: boolean }
 ): Promise<AppointmentRow[]> {
-  const digits = normalizePhoneDigits(phone);
-  if (digits.length < 10) return [];
+  const last10 = phoneLookupSuffix(phone);
+  if (!last10) return [];
 
-  const last10 = digits.slice(-10);
   const today = formatDateKey(new Date());
 
   const supabase = createServiceClient();
@@ -348,7 +356,7 @@ export async function rescheduleAppointment(
           existing.patient_phone
         ),
         clinicCalValue: branchCalValue,
-        phone: existing.patient_phone,
+        phone: toPhE164(existing.patient_phone),
         metadata: { service: existing.service, source: CLINIC.name },
       });
       if (!calResult.ok) {
