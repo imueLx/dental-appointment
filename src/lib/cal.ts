@@ -349,7 +349,7 @@ export async function cancelCalBooking(
 export async function rescheduleCalBooking(
   uid: string,
   start: string,
-  rescheduleReason = "Rescheduled via BrightSmile scheduler"
+  reschedulingReason = "Rescheduled via BrightSmile scheduler"
 ): Promise<CalBookingResult> {
   const apiKey = getCalApiKey();
   if (!apiKey) {
@@ -365,7 +365,7 @@ export async function rescheduleCalBooking(
         "Content-Type": "application/json",
         "cal-api-version": "2024-08-13",
       },
-      body: JSON.stringify({ start, rescheduleReason }),
+      body: JSON.stringify({ start, reschedulingReason }),
     }
   );
 

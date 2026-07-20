@@ -20,10 +20,35 @@ const WELCOME_MESSAGE: ChatMessageData = {
 
 const SESSION_ID_KEY = "scheduler-chat-session-id";
 const MESSAGES_KEY = "scheduler-chat-messages";
+const ACTIVITY_KEY = "scheduler-chat-activity-at";
+/** Start a fresh chat after this much idle time (30 minutes). */
+const CHAT_IDLE_TTL_MS = 30 * 60 * 1000;
+
+function clearChatStorage() {
+  sessionStorage.removeItem(SESSION_ID_KEY);
+  sessionStorage.removeItem(MESSAGES_KEY);
+  sessionStorage.removeItem(ACTIVITY_KEY);
+}
+
+function touchChatActivity() {
+  sessionStorage.setItem(ACTIVITY_KEY, String(Date.now()));
+}
+
+function isChatExpired(): boolean {
+  const raw = sessionStorage.getItem(ACTIVITY_KEY);
+  if (!raw) return false;
+  const at = Number(raw);
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at > CHAT_IDLE_TTL_MS;
+}
 
 function loadStoredMessages(): ChatMessageData[] {
   if (typeof window === "undefined") return [WELCOME_MESSAGE];
   try {
+    if (isChatExpired()) {
+      clearChatStorage();
+      return [WELCOME_MESSAGE];
+    }
     const raw = sessionStorage.getItem(MESSAGES_KEY);
     if (!raw) return [WELCOME_MESSAGE];
     const parsed = JSON.parse(raw) as unknown;
@@ -41,6 +66,13 @@ function loadStoredMessages(): ChatMessageData[] {
   } catch {
     return [WELCOME_MESSAGE];
   }
+}
+
+function createFreshSessionId(): string {
+  const id = crypto.randomUUID();
+  sessionStorage.setItem(SESSION_ID_KEY, id);
+  touchChatActivity();
+  return id;
 }
 
 const QUICK_PROMPTS = [
@@ -87,19 +119,38 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
     messages.length === 1 && messages[0]?.id === "welcome" && !isLoading;
 
   useEffect(() => {
+    if (isChatExpired()) {
+      clearChatStorage();
+      setMessages([WELCOME_MESSAGE]);
+      setSessionId(createFreshSessionId());
+      return;
+    }
     const stored = sessionStorage.getItem(SESSION_ID_KEY);
     if (stored) {
       setSessionId(stored);
       return;
     }
-    const id = crypto.randomUUID();
-    sessionStorage.setItem(SESSION_ID_KEY, id);
-    setSessionId(id);
+    setSessionId(createFreshSessionId());
   }, []);
 
   useEffect(() => {
+    if (!isOpen) return;
+    if (!isChatExpired()) return;
+    clearChatStorage();
+    setMessages([WELCOME_MESSAGE]);
+    setInput("");
+    setSessionId(createFreshSessionId());
+  }, [isOpen]);
+
+  useEffect(() => {
     try {
-      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
+      // Cap stored thread so sessionStorage / reloads stay bounded
+      const toStore =
+        messages.length > 100 ? messages.slice(-100) : messages;
+      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(toStore));
+      if (messages.some((m) => m.id !== "welcome")) {
+        touchChatActivity();
+      }
     } catch {
       // ignore quota / private mode failures
     }
@@ -131,7 +182,9 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
 
     const history = messages
       .filter((m) => m.id !== "welcome")
-      .map(({ role, content }) => ({ role, content }));
+      .map(({ role, content }) => ({ role, content }))
+      // API accepts at most 50 history items
+      .slice(-50);
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");

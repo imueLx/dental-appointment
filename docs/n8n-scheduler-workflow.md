@@ -121,6 +121,24 @@ Content-Type: application/json
 { "id": "<appointment-uuid-from-findAppointments>" }
 ```
 
+**Book (POST body):**
+```
+POST {{APP_URL}}/api/appointments/book
+Authorization: Bearer {{APPOINTMENT_API_SECRET}}
+Content-Type: application/json
+
+{
+  "appointmentDate": "2026-07-03",
+  "startHour": 9,
+  "clinicLocationId": "sm-southmall",
+  "patientName": "Juan Dela Cruz",
+  "patientPhone": "9171234567",
+  "patientEmail": "",
+  "service": "Dental Cleaning",
+  "slotIso": "2026-07-03T09:00:00+08:00"
+}
+```
+
 **Reschedule (POST body):**
 ```
 POST {{APP_URL}}/api/appointments/reschedule
