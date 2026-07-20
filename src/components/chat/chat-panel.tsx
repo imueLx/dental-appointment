@@ -10,6 +10,7 @@ import {
   type ChatMessageData,
 } from "@/components/chat/chat-message";
 import { cn } from "@/lib/utils";
+import { SCHEDULER_HISTORY_LIMIT } from "@/lib/n8n/scheduler-schema";
 
 const WELCOME_MESSAGE: ChatMessageData = {
   id: "welcome",
@@ -183,8 +184,7 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
     const history = messages
       .filter((m) => m.id !== "welcome")
       .map(({ role, content }) => ({ role, content }))
-      // API accepts at most 50 history items
-      .slice(-50);
+      .slice(-SCHEDULER_HISTORY_LIMIT);
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");

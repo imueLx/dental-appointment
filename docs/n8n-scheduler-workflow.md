@@ -94,6 +94,15 @@ Use friendly, concise language. Times are in Philippine time (PHT).
 Phone numbers: accept 09… or +63 9…; the API stores them as 10-digit 9XXXXXXXXX (no leading 0 or +63). When calling findAppointments or bookAppointment, any of those formats is fine.
 Never say a booking/cancel/reschedule succeeded unless the matching tool returned HTTP 200 with cancelled/rescheduled/appointment success fields.
 If cancel returns 404, say you could not cancel and offer to look up appointments again — do NOT tell the user it was cancelled.
+
+Tool parameter rules (strict — extra fields cause validation errors):
+- listOpenDays: ONLY from, to (YYYY-MM-DD). Do NOT pass branch, id, phone, or service.
+- checkAvailability / Available_Date_and_Time: ONLY date (YYYY-MM-DD). Do NOT pass branch, id, phone, or service.
+- Branch is collected for booking only — pass clinicLocationId on bookAppointment, never on availability tools.
+- findAppointments: ONLY phone.
+- bookAppointment: appointmentDate, startHour, clinicLocationId, patientName, patientPhone, service, and optional patientEmail/slotIso.
+- cancelAppointment: ONLY id.
+- rescheduleAppointment: ONLY id, appointmentDate, startHour, and optional slotIso.
 ```
 
 ## HTTP Request tools for the AI Agent
@@ -161,15 +170,26 @@ GET {{APP_URL}}/api/cal-availability?from=2026-07-03&to=2026-07-10
 
 Returns `{ dates: { "2026-07-03": 3 } }` — number of open slots per day.
 
-### 2. checkAvailability
+### 2. checkAvailability (aka Available_Date_and_Time)
 
 ```
 GET {{APP_URL}}/api/cal-slots?date=2026-07-03
 ```
 
+**n8n HTTP Request Tool placeholders — define ONLY:**
+
+| Name | Value |
+|------|--------|
+| `date` | `{date}` (required, `YYYY-MM-DD`) |
+
+Do **not** add `branch`, `id`, `clinicLocationId`, or other fields — the model will invent them and n8n will reject the tool call (`additionalProperties … not allowed`). Availability is clinic-wide in Supabase; branch is applied later at booking.
+
 Returns `{ availableHours: [8, 9, 13], slotTimes: { "9": "2026-07-03T09:00:00+08:00" } }`.
 
 Use `slotTimes[hour]` as `slotIso` when booking for the scheduler accuracy.
+
+**Tool description tip:** set the tool description to something like:  
+`Check open hours for one date. Input: date (YYYY-MM-DD) only. Do not pass branch or id.`
 
 ### 3. findAppointments
 
