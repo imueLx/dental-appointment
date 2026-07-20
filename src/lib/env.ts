@@ -33,3 +33,18 @@ export function getSupabaseServiceKey(): string | undefined {
     process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY
   );
 }
+
+/** Optional shared secret for Cal.com → /api/cal-webhook */
+export function getCalWebhookSecret(): string | undefined {
+  return process.env.CAL_WEBHOOK_SECRET;
+}
+
+/** n8n scheduler webhook URL (server-side only) */
+export function getN8nSchedulerWebhookUrl(): string | undefined {
+  return process.env.N8N_SCHEDULER_WEBHOOK_URL;
+}
+
+/** Optional shared secret for verifying webhook requests (server-side only) */
+export function getN8nSchedulerWebhookSecret(): string | undefined {
+  return process.env.N8N_SCHEDULER_WEBHOOK_SECRET;
+}

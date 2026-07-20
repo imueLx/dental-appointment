@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  addMonths,
   format,
   isWeekend,
   parseISO,
@@ -20,13 +19,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { BookingDialog } from "@/components/booking/booking-dialog";
 import { BOOKING_CONFIRMED_EVENT } from "@/lib/cal";
-import { CLINIC } from "@/lib/constants";
+import { CLINIC, CLINIC_TIMEZONE } from "@/lib/constants";
 import { formatClinicDate } from "@/lib/locale";
 import {
   BOOKING_WINDOW_DAYS,
+  buildLocalSlotIso,
   findFirstAvailableDate,
   formatDateKey,
   formatLunchLabel,
@@ -35,34 +34,29 @@ import {
   getBookingStartDate,
   getScheduleGridRows,
   isBookableCalendarDay,
-  isSlotBookable,
   isSlotInPast,
+  openCountsForRange,
+  openHoursForDate,
   type BookedSlot,
 } from "@/lib/slots";
 import { cn } from "@/lib/utils";
 
-function monthRange(month: Date) {
-  const from = format(startOfMonth(month), "yyyy-MM-dd");
-  const to = format(addMonths(startOfMonth(month), 1), "yyyy-MM-dd");
-  return { from, to };
+const bookingStart = getBookingStartDate();
+const bookingEnd = getBookingEndDate();
+const windowFrom = formatDateKey(bookingStart);
+const windowTo = formatDateKey(bookingEnd);
+
+function emptyBooked(): BookedSlot[] {
+  return [];
 }
 
-const initialBookingDate = formatDateKey(getBookingStartDate());
-const bookingEndDate = getBookingEndDate();
-
 export function DaySlotPicker() {
-  const [selectedDate, setSelectedDate] = useState(initialBookingDate);
-  const [viewMonth, setViewMonth] = useState(() =>
-    startOfMonth(getBookingStartDate())
+  const [selectedDate, setSelectedDate] = useState(() =>
+    formatDateKey(bookingStart)
   );
-  const [availableHours, setAvailableHours] = useState<Set<number>>(new Set());
-  const [slotTimes, setSlotTimes] = useState<Record<string, string>>({});
-  const [monthAvailability, setMonthAvailability] = useState<
-    Record<string, number>
-  >({});
-  const [loading, setLoading] = useState(true);
-  const [monthLoading, setMonthLoading] = useState(true);
-  const [configured, setConfigured] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => startOfMonth(bookingStart));
+  const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>(emptyBooked);
+  const [syncing, setSyncing] = useState(true);
   const [bookingSlot, setBookingSlot] = useState<{
     hour: number;
     iso?: string;
@@ -70,70 +64,70 @@ export function DaySlotPicker() {
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
   const timesSectionRef = useRef<HTMLDivElement>(null);
 
-  const fetchSlots = useCallback(async (date: string) => {
-    setLoading(true);
+  const monthAvailability = useMemo(
+    () => openCountsForRange(windowFrom, windowTo, bookedSlots),
+    [bookedSlots]
+  );
+
+  const availableHours = useMemo(
+    () => new Set(openHoursForDate(selectedDate, bookedSlots)),
+    [selectedDate, bookedSlots]
+  );
+
+  const slotTimes = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const hour of availableHours) {
+      map[String(hour)] = buildLocalSlotIso(
+        selectedDate,
+        hour,
+        CLINIC_TIMEZONE
+      );
+    }
+    return map;
+  }, [availableHours, selectedDate]);
+
+  const loadBooked = useCallback(async () => {
+    setSyncing(true);
     try {
-      const res = await fetch(`/api/cal-slots?date=${date}`);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableHours(new Set(data.availableHours ?? []));
-        setSlotTimes(data.slotTimes ?? {});
-        setConfigured(data.configured === true);
-      }
+      const res = await fetch(
+        `/api/availability?from=${windowFrom}&to=${windowTo}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as { slots?: BookedSlot[] };
+      setBookedSlots(data.slots ?? []);
+    } catch {
+      // Keep last known / empty booked — local hours still show instantly
     } finally {
-      setLoading(false);
+      setSyncing(false);
     }
   }, []);
 
-  const fetchMonthAvailability = useCallback(async (month: Date) => {
-    setMonthLoading(true);
-    try {
-      const { from, to } = monthRange(month);
-      const res = await fetch(`/api/cal-availability?from=${from}&to=${to}`);
-      if (res.ok) {
-        const data = await res.json();
-        setMonthAvailability(data.dates ?? {});
-        setConfigured(data.configured === true);
-      }
-    } finally {
-      setMonthLoading(false);
-    }
-  }, []);
+  useEffect(() => {
+    void loadBooked();
+  }, [loadBooked]);
 
   useEffect(() => {
-    fetchSlots(selectedDate);
-  }, [selectedDate, fetchSlots]);
-
-  useEffect(() => {
-    fetchMonthAvailability(viewMonth);
-  }, [viewMonth, fetchMonthAvailability]);
-
-  useEffect(() => {
-    if (monthLoading || hasAutoSelected) return;
+    if (hasAutoSelected) return;
     const first = findFirstAvailableDate(monthAvailability);
     setSelectedDate(first);
     setHasAutoSelected(true);
-  }, [monthAvailability, monthLoading, hasAutoSelected]);
+  }, [monthAvailability, hasAutoSelected]);
 
   useEffect(() => {
     const refresh = () => {
-      fetchSlots(selectedDate);
-      fetchMonthAvailability(viewMonth);
+      void loadBooked();
     };
     window.addEventListener(BOOKING_CONFIRMED_EVENT, refresh);
     return () => window.removeEventListener(BOOKING_CONFIRMED_EVENT, refresh);
-  }, [selectedDate, viewMonth, fetchSlots, fetchMonthAvailability]);
+  }, [loadBooked]);
 
   const dateObj = parseISO(selectedDate + "T12:00:00");
   const weekend = isWeekend(dateObj);
   const rows = getScheduleGridRows();
-  const bookedSlots: BookedSlot[] = [];
 
   function isOpen(hour: number): boolean {
     if (weekend || isSlotInPast(dateObj, hour)) return false;
-    if (!configured) {
-      return isSlotBookable(dateObj, hour, bookedSlots);
-    }
     return availableHours.has(hour);
   }
 
@@ -173,7 +167,11 @@ export function DaySlotPicker() {
       <div className="mx-auto max-w-5xl space-y-4 lg:space-y-0">
         <div className="flex gap-2 lg:hidden">
           <StepChip step={1} label="Pick a date" active />
-          <StepChip step={2} label="Choose a time" active={!weekend && openCount > 0} />
+          <StepChip
+            step={2}
+            label="Choose a time"
+            active={!weekend && openCount > 0}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2 lg:items-start lg:gap-6">
@@ -186,6 +184,7 @@ export function DaySlotPicker() {
               <CardDescription className="text-xs sm:text-sm">
                 Starts tomorrow · {BOOKING_WINDOW_DAYS} days ahead · Lunch{" "}
                 {CLINIC.lunchBreak}
+                {syncing ? " · Syncing…" : ""}
               </CardDescription>
             </CardHeader>
             <CardContent className="px-3 pb-4 sm:px-6 sm:pb-6">
@@ -205,18 +204,13 @@ export function DaySlotPicker() {
               </div>
 
               <div className="relative flex justify-center">
-                {monthLoading && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/60 backdrop-blur-[1px]">
-                    <Skeleton className="size-8 rounded-full" />
-                  </div>
-                )}
                 <Calendar
                   mode="single"
                   selected={dateObj}
                   month={viewMonth}
                   onMonthChange={setViewMonth}
-                  startMonth={startOfMonth(getBookingStartDate())}
-                  endMonth={startOfMonth(bookingEndDate)}
+                  startMonth={startOfMonth(bookingStart)}
+                  endMonth={startOfMonth(bookingEnd)}
                   onSelect={handleDateSelect}
                   disabled={(date) => !isBookableCalendarDay(date)}
                   showOutsideDays={false}
@@ -229,9 +223,9 @@ export function DaySlotPicker() {
                     week: "w-full",
                     day: "flex-1",
                     caption_label: "text-sm font-semibold sm:text-base",
-                    weekday: "flex-1 text-center text-[10px] font-medium sm:text-xs",
-                    button_previous:
-                      "size-9 touch-manipulation sm:size-8",
+                    weekday:
+                      "flex-1 text-center text-[10px] font-medium sm:text-xs",
+                    button_previous: "size-9 touch-manipulation sm:size-8",
                     button_next: "size-9 touch-manipulation sm:size-8",
                   }}
                   components={{
@@ -264,10 +258,12 @@ export function DaySlotPicker() {
                     Tap a time to continue
                   </CardDescription>
                 </div>
-                {!weekend && !loading && openCount > 0 && (
+                {!weekend && openCount > 0 && (
                   <Badge variant="secondary" className="shrink-0 gap-1 text-xs">
                     <Clock className="size-3" />
-                    <span className="hidden min-[380px]:inline">{slotCountLabel}</span>
+                    <span className="hidden min-[380px]:inline">
+                      {slotCountLabel}
+                    </span>
                     <span className="min-[380px]:hidden">{openCount}</span>
                   </Badge>
                 )}
@@ -280,12 +276,6 @@ export function DaySlotPicker() {
                   <p className="mt-1 text-sm text-muted-foreground">
                     Please choose a weekday.
                   </p>
-                </div>
-              ) : loading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <Skeleton key={i} className="h-14 w-full rounded-xl sm:h-12" />
-                  ))}
                 </div>
               ) : openCount === 0 ? (
                 <div className="rounded-xl bg-muted px-4 py-8 text-center sm:py-10">
@@ -306,7 +296,10 @@ export function DaySlotPicker() {
                           <span className="text-xs font-medium text-muted-foreground sm:text-sm">
                             {formatLunchLabel()}
                           </span>
-                          <Badge variant="outline" className="shrink-0 text-[10px] sm:text-xs">
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 text-[10px] sm:text-xs"
+                          >
                             Lunch
                           </Badge>
                         </div>
@@ -377,7 +370,7 @@ export function DaySlotPicker() {
           </Card>
         </div>
 
-        {!weekend && openCount > 0 && !loading && (
+        {!weekend && openCount > 0 && (
           <p className="text-center text-xs text-muted-foreground lg:hidden">
             {shortDate} · {slotCountLabel}
           </p>

@@ -47,6 +47,51 @@ export function hourToTimeString(hour: number): string {
   return `${hour.toString().padStart(2, "0")}:00:00`;
 }
 
+/** Client-safe ISO start for booking (Asia/Manila uses +08:00). */
+export function buildLocalSlotIso(
+  date: string,
+  hour: number,
+  timeZone: string = "Asia/Manila"
+): string {
+  const hh = hour.toString().padStart(2, "0");
+  if (timeZone === "Asia/Manila") {
+    return `${date}T${hh}:00:00+08:00`;
+  }
+  return `${date}T${hh}:00:00`;
+}
+
+/** Open slot counts for each bookable day in [from, to] inclusive. */
+export function openCountsForRange(
+  from: string,
+  to: string,
+  bookedSlots: BookedSlot[],
+  now: Date = new Date()
+): Record<string, number> {
+  const dates: Record<string, number> = {};
+  const start = parseISO(`${from}T12:00:00`);
+  const end = parseISO(`${to}T12:00:00`);
+  for (let d = start; d.getTime() <= end.getTime(); d = addDays(d, 1)) {
+    const key = formatDateKey(d);
+    if (!isBookableCalendarDay(d, now)) continue;
+    dates[key] = generateDaySlots(d).filter((hour) =>
+      isSlotBookable(d, hour, bookedSlots)
+    ).length;
+  }
+  return dates;
+}
+
+export function openHoursForDate(
+  dateKey: string,
+  bookedSlots: BookedSlot[],
+  now: Date = new Date()
+): number[] {
+  const day = parseISO(`${dateKey}T12:00:00`);
+  if (!isBookableCalendarDay(day, now)) return [];
+  return generateDaySlots(day).filter((hour) =>
+    isSlotBookable(day, hour, bookedSlots)
+  );
+}
+
 export function parseTimeToHour(time: string): number {
   const [h] = time.split(":");
   return parseInt(h, 10);

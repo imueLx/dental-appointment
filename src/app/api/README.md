@@ -62,7 +62,7 @@ Returns booked slots without patient information.
 
 ### GET /api/cal-availability (public)
 
-Open slot counts per day (Cal.com + Supabase merge).
+Open slot counts per day from **local clinic hours + Supabase** (no live Cal slots API).
 
 **Query params:** `from`, `to`, optional `timeZone`
 
@@ -70,13 +70,14 @@ Open slot counts per day (Cal.com + Supabase merge).
 ```json
 {
   "dates": { "2026-07-03": 3, "2026-07-04": 5 },
+  "configured": true,
   "timeZone": "Asia/Manila"
 }
 ```
 
 ### GET /api/cal-slots (public)
 
-Available hours for a single date.
+Available hours for a single date (same local + Supabase source as above — used by `/book` and the AI agent).
 
 **Query params:** `date` (YYYY-MM-DD), optional `timeZone`
 
@@ -121,7 +122,7 @@ Optional: `?phone=...&upcomingOnly=false` to include past appointments.
 
 ### POST /api/appointments (authenticated)
 
-Create an appointment with Cal.com sync (when configured).
+Create an appointment and sync to Cal.com when `CAL_API_KEY` is configured.
 
 **Body:**
 ```json
@@ -169,6 +170,23 @@ Reschedule an appointment. Syncs to Cal.com when `cal_booking_uid` is stored.
 ### DELETE /api/appointments/[id] (authenticated)
 
 Cancel an appointment (sets `status = cancelled`). Cancels on Cal.com when `cal_booking_uid` is present.
+
+### POST /api/cal-webhook (public)
+
+Receives Cal.com webhooks (`BOOKING_CREATED` / `CANCELLED` / `RESCHEDULED`) and upserts Supabase so staff dashboard bookings stay visible to `/book` and the AI.
+
+Optional auth: `Authorization: Bearer <CAL_WEBHOOK_SECRET>` or `?secret=`.
+
+### POST /api/booking-event-sync (authenticated)
+
+n8n can call this for email confirm / cancel by Cal booking UID:
+- `confirm`: sends booking confirmation email when `patient_email` exists
+- `cancel`: marks the appointment `cancelled`
+
+Request body:
+```json
+{ "bookingUid": "abc-123", "action": "confirm" }
+```
 
 ---
 

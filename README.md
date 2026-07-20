@@ -1,50 +1,52 @@
 # BrightSmile Dental — Appointment System
 
-A modern client-facing dental website built with **Next.js**, **shadcn/ui**, and **Cal.com** for scheduling. Marketing pages are custom; booking is powered by an embedded Cal.com calendar with staff admin, client-facing availability, and n8n/Zapier automation.
+Patient site + AI chat scheduler for BrightSmile. **Next.js**, **Supabase**, **Cal.com** (staff calendar), and **n8n** (AI agent).
 
 ## Features
 
-- **Landing page** — Hero, services preview, how-it-works, testimonials
-- **Services** — Full list of dental treatments
-- **Book appointment** — Embedded Cal.com scheduler (real-time availability)
-- **Contact** — Contact form and clinic info
-- **API routes** — Optional Supabase endpoints for custom automation
+- Custom marketing pages + `/book` day/time picker
+- Fast availability from **local clinic hours + Supabase** (no live Cal slots API — better from PH)
+- Bookings sync to **Cal.com** for staff admin
+- AI chat widget → n8n agent → same appointment APIs as manual booking
+- Cal.com webhooks keep dashboard bookings in Supabase
 
 ## Getting started
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 npm install
 ```
 
-### 2. Set up Cal.com (booking)
+### 2. Environment
 
-1. Create a free account at [cal.com](https://cal.com/signup)
-2. Create an **Event Type** (e.g. "Dental Appointment", 60 min)
-3. Set **availability** Mon–Fri 8am–5pm, **block lunch 1:00–2:00 PM** (not 12–1), 60 min slots
-4. **Location** → In person (removes Google Meet)
-5. **Profile → Time format** → 12 hour (AM/PM) — the 12h/24h toggle in the embed is controlled by Cal.com and cannot be hidden from code
-4. Copy your booking link — e.g. `yourname` or `yourname/dental-appointment`
-5. Add to `.env.local`:
+Copy [`.env.local.example`](.env.local.example) to `.env.local` and fill in values.
+
+Minimum for local booking:
 
 ```env
-NEXT_PUBLIC_CAL_LINK=yourname/dental-appointment
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_CAL_LINK=username/event-slug
+CAL_API_KEY=
+APPOINTMENT_API_SECRET=
+CLINIC_TIMEZONE=Asia/Manila
 ```
 
-6. Restart the dev server
+For AI chat, also set `N8N_SCHEDULER_WEBHOOK_URL` (and optional secret).
 
-### 3. Configure environment
+### 3. Supabase
 
-Copy `.env.local.example` to `.env.local`. Minimum for booking:
+Run SQL migrations in `supabase/migrations/` (Singapore region recommended).
 
-```env
-NEXT_PUBLIC_CAL_LINK=your-username/event-slug
-```
+### 4. Cal.com
 
-Supabase keys are optional (only needed if using the legacy API routes).
+1. Free account → event type (60 min, Mon–Fri, lunch 12–1 PM, Asia/Manila)
+2. API key + booking link in env
+3. Webhook → `https://your-domain/api/cal-webhook` (see [docs/free-hosting.md](docs/free-hosting.md))
 
-### 4. Run the dev server
+### 5. Dev server
 
 ```bash
 npm run dev
@@ -52,29 +54,35 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Cal.com + automation
+## Free production hosting
 
-- **Staff admin:** Manage hours, block days, view bookings in Cal.com dashboard
-- **Client booking:** Embedded on `/book` with your site's branding
-- **n8n / Zapier:** Cal.com → Settings → Developer → Webhooks
-- **AI flows:** Trigger on `BOOKING_CREATED`, send confirmations, sync Google Calendar
+See **[docs/free-hosting.md](docs/free-hosting.md)** — Vercel + Supabase + Cal.com + free n8n + Gemini.
+
+## AI scheduler (n8n)
+
+Guide: [docs/n8n-scheduler-workflow.md](docs/n8n-scheduler-workflow.md)
+
+Flow: Chat widget → `POST /api/chat` → n8n AI Agent → `/api/cal-slots` + `/api/appointments`.
+
+## Staff admin
+
+Use the **Cal.com dashboard** to view/manage appointments and block time. Optional in-app `/admin` can come later.
 
 ## Tech stack
 
-- Next.js 16 (App Router)
-- TypeScript · Tailwind CSS v4 · shadcn/ui
-- Cal.com embed (`@calcom/embed-react`)
-- Optional: Supabase + REST API for custom automation
+- Next.js (App Router) · TypeScript · Tailwind · shadcn/ui
+- Supabase (appointments)
+- Cal.com API (create / cancel / reschedule + staff UI)
+- n8n (AI agent)
 
 ## Project structure
 
 ```
 src/
-├── app/              # Pages and API routes
-├── components/
-│   ├── booking/      # Cal.com embed + booking sidebar
-│   ├── home/         # Landing page sections
-│   ├── layout/       # Header, footer, page headers
-│   └── contact/
-└── lib/              # Constants, env helpers
+├── app/                 # Pages + API routes
+├── components/booking/  # Day/time picker + dialog
+├── components/chat/     # AI chat widget
+└── lib/                 # Cal, appointments, slots, n8n client
+docs/                    # Hosting + n8n guides
+supabase/migrations/
 ```

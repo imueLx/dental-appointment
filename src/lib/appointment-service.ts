@@ -8,7 +8,11 @@ import {
   parseCalLink,
 } from "@/lib/cal";
 import { CLINIC, getClinicLocationById } from "@/lib/constants";
-import { getCalLink, getSupabaseServiceKey, getSupabaseUrl } from "@/lib/env";
+import {
+  getCalLink,
+  getSupabaseServiceKey,
+  getSupabaseUrl,
+} from "@/lib/env";
 import { getBookedSlots } from "@/lib/appointments";
 import { createServiceClient } from "@/lib/supabase/admin";
 import {
@@ -83,11 +87,25 @@ export async function createAppointment(
   }
 
   const booking = parsed.data;
+
+  const date = parseDateKey(booking.appointmentDate);
+  const bookedSlots = await getBookedSlots(
+    booking.appointmentDate,
+    booking.appointmentDate
+  );
+  if (!isSlotBookable(date, booking.startHour, bookedSlots)) {
+    return {
+      success: false,
+      error: "That time slot is not available. Please choose another.",
+    };
+  }
+
   let calSynced = false;
   let calBookingUid: string | undefined;
 
   const calLink = getCalLink();
   const calParsed = parseCalLink(calLink);
+
   if (getCalApiKey() && calParsed) {
     const start =
       options?.slotIso ??
@@ -102,7 +120,10 @@ export async function createAppointment(
     const calResult = await createCalBooking(calParsed, {
       start,
       name: booking.patientName,
-      email: attendeeEmailFromPatient(booking.patientEmail, booking.patientPhone),
+      email: attendeeEmailFromPatient(
+        booking.patientEmail,
+        booking.patientPhone
+      ),
       clinicCalValue: branch.calValue,
       phone: booking.patientPhone,
       metadata: {
@@ -136,6 +157,22 @@ export async function createAppointment(
 
   if (error) {
     if (error.code === "23505") {
+      // Likely raced with /api/cal-webhook after Cal.com create
+      if (calBookingUid) {
+        const { data: existing } = await supabase
+          .from("appointments")
+          .select("id, cal_booking_uid")
+          .eq("cal_booking_uid", calBookingUid)
+          .maybeSingle();
+        if (existing) {
+          return {
+            success: true,
+            id: existing.id,
+            calSynced: true,
+            calBookingUid: existing.cal_booking_uid ?? calBookingUid,
+          };
+        }
+      }
       return {
         success: false,
         error: "This slot was just taken. Please choose another time.",
@@ -283,7 +320,10 @@ export async function rescheduleAppointment(
 
   let newCalBookingUid = existing.cal_booking_uid;
 
-  if (getCalApiKey()) {
+  const calLink = getCalLink();
+  const calParsed = parseCalLink(calLink);
+
+  if (getCalApiKey() && calParsed) {
     if (existing.cal_booking_uid) {
       const calResult = await rescheduleCalBooking(
         existing.cal_booking_uid,
@@ -297,30 +337,27 @@ export async function rescheduleAppointment(
       }
       if (calResult.uid) newCalBookingUid = calResult.uid;
     } else {
-      const calLink = getCalLink();
-      const calParsed = parseCalLink(calLink);
-      if (calParsed) {
-        const branchMatch = existing.notes?.match(/Branch: (.+)/);
-        const branchCalValue = branchMatch?.[1]?.trim() ?? "SM Southmall BrightSmile";
-        const calResult = await createCalBooking(calParsed, {
-          start,
-          name: existing.patient_name,
-          email: attendeeEmailFromPatient(
-            existing.patient_email,
-            existing.patient_phone
-          ),
-          clinicCalValue: branchCalValue,
-          phone: existing.patient_phone,
-          metadata: { service: existing.service, source: CLINIC.name },
-        });
-        if (!calResult.ok) {
-          return {
-            success: false,
-            error: calResult.error ?? "Could not confirm on calendar.",
-          };
-        }
-        if (calResult.uid) newCalBookingUid = calResult.uid;
+      const branchMatch = existing.notes?.match(/Branch: (.+)/);
+      const branchCalValue =
+        branchMatch?.[1]?.trim() ?? "SM Southmall BrightSmile";
+      const calResult = await createCalBooking(calParsed, {
+        start,
+        name: existing.patient_name,
+        email: attendeeEmailFromPatient(
+          existing.patient_email,
+          existing.patient_phone
+        ),
+        clinicCalValue: branchCalValue,
+        phone: existing.patient_phone,
+        metadata: { service: existing.service, source: CLINIC.name },
+      });
+      if (!calResult.ok) {
+        return {
+          success: false,
+          error: calResult.error ?? "Could not confirm on calendar.",
+        };
       }
+      if (calResult.uid) newCalBookingUid = calResult.uid;
     }
   }
 

@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getClinicTimeZone } from "@/lib/cal";
 import {
-  availableHoursFromIsoTimes,
-  fetchCalAvailableSlots,
-  getCalApiKey,
-  getClinicTimeZone,
-  isoTimesByHour,
-  parseCalLink,
-} from "@/lib/cal";
-import { getBookedSlots } from "@/lib/appointments";
-import { getCalLink } from "@/lib/env";
-import { parseTimeToHour, SLOT_HOURS } from "@/lib/slots";
+  getOpenHoursForDate,
+  isLocalAvailabilityConfigured,
+  SLOT_HOURS,
+} from "@/lib/local-availability";
 
+/**
+ * Fast availability for one date: clinic hours − Supabase bookings.
+ * Does not call Cal.com slots API (avoids PH → US latency).
+ */
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");
   const timeZone =
@@ -23,17 +22,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const calLink = getCalLink();
-  const parsed = parseCalLink(calLink);
-
-  if (!parsed) {
-    return NextResponse.json(
-      { error: "NEXT_PUBLIC_CAL_LINK not configured" },
-      { status: 503 }
-    );
-  }
-
-  if (!getCalApiKey()) {
+  if (!isLocalAvailabilityConfigured()) {
     return NextResponse.json({
       date,
       availableHours: [],
@@ -43,35 +32,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const result = await fetchCalAvailableSlots(parsed, date, timeZone);
-
-  if (!result.ok) {
-    return NextResponse.json({
-      date,
-      availableHours: [],
-      allSlotHours: [...SLOT_HOURS],
-      configured: true,
-      apiError: result.error,
-      timeZone,
-    });
-  }
-
-  const availableHours = [...availableHoursFromIsoTimes(result.times)];
-  const slotTimes = Object.fromEntries(isoTimesByHour(result.times));
-
-  const booked = await getBookedSlots(date, date);
-  const bookedHours = new Set(
-    booked.map((slot) => parseTimeToHour(slot.start_time))
-  );
-  const openHours = availableHours.filter((hour) => !bookedHours.has(hour));
-  const openSlotTimes = Object.fromEntries(
-    Object.entries(slotTimes).filter(([hour]) => !bookedHours.has(Number(hour)))
-  );
+  const { availableHours, slotTimes } = await getOpenHoursForDate(date, timeZone);
 
   return NextResponse.json({
     date,
-    availableHours: openHours,
-    slotTimes: openSlotTimes,
+    availableHours,
+    slotTimes,
     allSlotHours: [...SLOT_HOURS],
     configured: true,
     timeZone,

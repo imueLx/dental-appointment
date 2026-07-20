@@ -8,7 +8,11 @@ This guide describes how to connect the BrightSmile site chat widget to an n8n w
 User → Chat Widget → POST /api/chat → n8n Webhook → AI Agent → Appointment APIs → Supabase + Cal.com
 ```
 
+Availability tools (`/api/cal-slots`, `/api/cal-availability`) use **local clinic hours + Supabase** (fast). Create/cancel/reschedule write to **Cal.com** then Supabase.
+
 The Next.js app proxies chat messages so your n8n webhook URL stays server-side only.
+
+Free hosting (Vercel + free n8n): see [free-hosting.md](./free-hosting.md).
 
 ## Environment setup
 
@@ -18,11 +22,13 @@ In `.env.local` on the Next.js app:
 N8N_SCHEDULER_WEBHOOK_URL=https://your-n8n.example.com/webhook/scheduler
 N8N_SCHEDULER_WEBHOOK_SECRET=your-shared-secret
 APPOINTMENT_API_SECRET=your-api-secret
+NEXT_PUBLIC_CAL_LINK=your-username/your-event-slug
+CAL_API_KEY=cal_live_...
 ```
 
 In n8n, verify incoming requests using the `X-Webhook-Secret` header if configured.
 
-Set your deployed app URL in n8n HTTP Request nodes, e.g. `https://your-site.com`.
+Set your deployed app URL in n8n HTTP Request nodes, e.g. `https://your-site.vercel.app`.
 
 ## Webhook trigger
 
@@ -44,6 +50,22 @@ Create a **Webhook** node:
   ]
 }
 ```
+
+## Stable contract (keep this stable for future n8n workflows)
+
+The Next.js proxy forwards the following JSON to your n8n webhook:
+
+Request keys:
+- `message` (string, 1–2000 chars)
+- `sessionId` (optional UUID)
+- `history` (optional, up to 50 items of `{ role: "user" | "assistant", content: string }`)
+
+Your n8n workflow should respond with JSON:
+- `reply` (string, preferred)
+- `message` (string, accepted as a fallback for `reply`)
+
+Auth:
+- If `N8N_SCHEDULER_WEBHOOK_SECRET` is set in the Next.js app, the proxy includes `X-Webhook-Secret` in the webhook request header.
 
 ## AI Agent system prompt
 
@@ -99,7 +121,7 @@ GET {{APP_URL}}/api/cal-slots?date=2026-07-03
 
 Returns `{ availableHours: [8, 9, 13], slotTimes: { "9": "2026-07-03T09:00:00+08:00" } }`.
 
-Use `slotTimes[hour]` as `slotIso` when booking for Cal.com accuracy.
+Use `slotTimes[hour]` as `slotIso` when booking for the scheduler accuracy.
 
 ### 3. findAppointments
 
@@ -199,10 +221,10 @@ curl -H "Authorization: Bearer YOUR_SECRET" \
 
 ## Database migration
 
-Run the Supabase migration to add Cal.com booking UID storage:
+Run the Supabase migration to add booking UID storage for scheduler cancel/reschedule:
 
 ```
 supabase/migrations/005_cal_booking_uid.sql
 ```
 
-This adds `cal_booking_uid` column required for Cal.com cancel/reschedule sync.
+This adds `cal_booking_uid` column required for cancel/reschedule sync.
