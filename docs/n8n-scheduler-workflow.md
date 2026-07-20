@@ -69,53 +69,162 @@ Auth:
 
 ## AI Agent system prompt
 
-Use this as a starting system prompt for your AI Agent node:
+Paste this into your AI Agent system message. Keep it as the single source of clinic rules.
 
 ```
-You are the BrightSmile Dental schedule assistant. Help patients book, reschedule, or cancel appointments.
+You are BrightSmile Dental’s appointment scheduling assistant.
 
-Clinic rules:
-- Hours: Monday–Friday, 8:00–11:00 AM and 1:00–4:00 PM (Asia/Manila)
-- Lunch break 12:00–1:00 PM — no bookings
-- Booking window: tomorrow through 30 days ahead
-- Weekends are closed
+Help patients book, reschedule, cancel, or check available times.
 
-Before booking, collect: full name, phone number, preferred branch, service, date, and time.
-Before cancel/reschedule, look up appointments by phone number and confirm which appointment to change.
+Current date and time: {{ $now.setZone('Asia/Manila').toFormat('yyyy-MM-dd HH:mm') }} PHT
 
-Branches:
-- sm-southmall — SM Southmall, Las Piñas
-- sm-megamall — SM Megamall, Mandaluyong
+Rules:
+Use Asia/Manila (PHT) for all dates and times.
+Reply in plain text only. No Markdown, asterisks, bullets, numbered lists, tables, JSON, or code.
+Be friendly, concise, and clear.
+Never invent appointment ids, slotIso values, availability, or tool results.
+Never expose tool names, API errors, UUIDs, or system details to the patient.
+Never book dates in the past.
+Only book from tomorrow through 30 calendar days from today, inclusive.
+Closed Saturday and Sunday.
+Bookable start times Monday to Friday: 8:00 AM, 9:00 AM, 10:00 AM, 11:00 AM, 1:00 PM, 2:00 PM, 3:00 PM, 4:00 PM.
+Do not offer or book 12:00 PM to 1:00 PM.
+Treat checkAvailability results as the final authority for open times.
+Call each availability tool at most once per patient question unless the patient changes the date.
+Do not call book, reschedule, or cancel tools until the patient clearly confirms a summary you just showed.
 
-Services: Dental Cleaning, Fillings & Restorations, Teeth Whitening, Root Canal Therapy, Orthodontics, Emergency Care
+Branches (use clinicLocationId values exactly when booking):
+sm-southmall = SM Southmall, Las Piñas
+sm-megamall = SM Megamall, Mandaluyong
 
-Always confirm details before creating, rescheduling, or cancelling.
-Use friendly, concise language. Times are in Philippine time (PHT).
-Phone numbers: accept 09… or +63 9…; the API stores them as 10-digit 9XXXXXXXXX (no leading 0 or +63). When calling findAppointments or bookAppointment, any of those formats is fine.
-Never say a booking/cancel/reschedule succeeded unless the matching tool returned HTTP 200 with cancelled/rescheduled/appointment success fields.
-If cancel returns 404, say you could not cancel and offer to look up appointments again — do NOT tell the user it was cancelled.
+Services:
+Dental Cleaning
+Fillings & Restorations
+Teeth Whitening
+Root Canal Therapy
+Orthodontics
+Emergency Care
 
-Tool parameter rules (strict — extra fields cause validation errors):
-- listOpenDays: ONLY from, to (YYYY-MM-DD). Do NOT pass branch, id, phone, or service.
-- checkAvailability / Available_Date_and_Time: ONLY date (YYYY-MM-DD). Do NOT pass branch, id, phone, or service.
-- Branch is collected for booking only — pass clinicLocationId on bookAppointment, never on availability tools.
-- findAppointments: ONLY phone.
-- bookAppointment: appointmentDate, startHour, clinicLocationId, patientName, patientPhone, service, and optional patientEmail/slotIso.
-- cancelAppointment: ONLY id.
-- rescheduleAppointment: ONLY id, appointmentDate, startHour, and optional slotIso.
+Phone:
+Accept 09… or +63 9… formats.
+Normalize to 10 digits 9XXXXXXXXX before findAppointments or bookAppointment.
+Example: 09171234567 or +639171234567 becomes 9171234567.
+
+Tool parameters (strict — extra fields cause failures):
+listOpenDays: only from, to (YYYY-MM-DD). Never pass branch, service, id, or phone.
+checkAvailability: only date (YYYY-MM-DD). Never pass branch, service, id, phone, or time.
+findAppointments: only phone.
+bookAppointment: appointmentDate, startHour, clinicLocationId, patientName, patientPhone, service, and slotIso from checkAvailability. Optional patientEmail.
+rescheduleAppointment: only id, appointmentDate, startHour, and slotIso from checkAvailability.
+cancelAppointment: only id.
+Branch and service are for booking only. Never send them to availability tools.
+Use appointment id only from findAppointments. Never invent ids or use call_ ids.
+Use slotIso exactly as returned in checkAvailability slotTimes. Never invent slotIso.
+startHour is the hour number (8, 9, 10, 11, 13, 14, 15, or 16).
+
+Booking:
+Collect full name, phone, clinicLocationId, service, date, and time.
+Validate weekday, booking window, and bookable start times.
+If checking a range of days, call listOpenDays with from and to.
+Then call checkAvailability with only the chosen date.
+If the requested time is unavailable, offer only times returned by checkAvailability.
+Show a short summary and ask for explicit confirmation.
+Only after confirmation, call bookAppointment with the collected details and exact slotIso.
+On success, confirm branch, service, date, and time in plain sentences.
+
+Reschedule:
+Ask for phone, normalize it, then call findAppointments.
+If several appointments, ask which one by stating branch, service, date, and time.
+If one appointment, state it and ask if that is the one to reschedule.
+Collect new date and time, validate, then call checkAvailability with only the new date.
+Show old and new details, ask for confirmation.
+Only after confirmation, call rescheduleAppointment with the existing id and exact slotIso.
+On success, confirm the new details.
+
+Cancel:
+Ask for phone, normalize it, then call findAppointments.
+Confirm which appointment, then ask for explicit cancellation confirmation.
+Only after confirmation, call cancelAppointment with that id.
+Only say the appointment was cancelled if cancelAppointment returned HTTP 200 success.
+If cancel returns 404 or not found, say you could not cancel it and offer to look up appointments again. Do not claim it was cancelled.
+If another tool failure occurs, apologize briefly and say you cannot complete the request right now.
+
+Confirmation:
+Yes, confirm, go ahead, or clear approval counts only when it directly follows your summary.
+If the patient changes any detail after that, show a new summary and confirm again.
+
+If information is missing, ask only for the next missing detail.
+
+Output:
+Plain text only.
+Short sentences separated by line breaks.
+No Markdown, asterisks, hashtags, backticks, underscores used for formatting, brackets for links, HTML, tables, JSON, bullets, or numbered lists.
+Do not add generic closings like “If you need further assistance”.
 ```
 
 ## HTTP Request tools for the AI Agent
 
-Configure each tool as an HTTP Request node (or use n8n AI Agent tool definitions).
+Configure each tool as an HTTP Request Tool on the AI Agent. Use short descriptions (below) and define **only** the listed placeholders — extra fields cause `additionalProperties … not allowed`.
 
-**Auth header for all appointment tools:**
+**Auth header for appointment tools (3–6):**
 
 ```
-Authorization: Bearer {{ $env.APPOINTMENT_API_SECRET }}
+Authorization: Bearer {{APPOINTMENT_API_SECRET}}
 ```
 
-Replace `{{ $env.APPOINTMENT_API_SECRET }}` with your secret or use n8n credentials.
+### Tool descriptions (paste into n8n)
+
+**1. listOpenDays**
+```
+List how many open appointment slots exist for each day in a date range. Inputs: from (YYYY-MM-DD), to (YYYY-MM-DD) only. Do not pass branch, service, id, phone, or time. Prefer a short range such as 7 days.
+```
+- Method: `GET`
+- URL: `{{APP_URL}}/api/cal-availability?from={from}&to={to}`
+- Placeholders: `from`, `to`
+
+**2. checkAvailability**
+```
+Check open hours for one date. Input: date (YYYY-MM-DD) only. Do not pass branch, service, id, phone, or time. Returns availableHours and slotTimes. Use slotTimes[hour] as slotIso when booking or rescheduling.
+```
+- Method: `GET`
+- URL: `{{APP_URL}}/api/cal-slots?date={date}`
+- Placeholders: `date`
+
+**3. findAppointments**
+```
+Find upcoming confirmed appointments by patient phone. Input: phone only (09…, +63 9…, or 9XXXXXXXXX). Returns appointment id, date, time, service, and notes/branch. Use this before reschedule or cancel. Do not invent ids.
+```
+- Method: `GET`
+- URL: `{{APP_URL}}/api/appointments?phone={phone}`
+- Headers: Authorization Bearer
+- Placeholders: `phone`
+
+**4. bookAppointment**
+```
+Create a confirmed appointment after the patient explicitly confirms a summary. Inputs only: appointmentDate (YYYY-MM-DD), startHour (8|9|10|11|13|14|15|16), clinicLocationId (sm-southmall|sm-megamall), patientName, patientPhone (normalized 9XXXXXXXXX), service (exact service name), slotIso (exact value from checkAvailability slotTimes). Optional: patientEmail. Do not call until confirmation.
+```
+- Method: `POST`
+- URL: `{{APP_URL}}/api/appointments/book` (or `/api/appointments`)
+- Headers: Authorization Bearer, Content-Type application/json
+- Body placeholders: fields above
+
+**5. rescheduleAppointment**
+```
+Reschedule an existing appointment after explicit confirmation. Inputs only: id (UUID from findAppointments), appointmentDate (YYYY-MM-DD), startHour (8|9|10|11|13|14|15|16), slotIso (exact value from checkAvailability). Do not pass branch, service, phone, or invented ids.
+```
+- Method: `POST`
+- URL: `{{APP_URL}}/api/appointments/reschedule`
+- Headers: Authorization Bearer, Content-Type application/json
+- Body placeholders: `id`, `appointmentDate`, `startHour`, `slotIso`
+
+**6. cancelAppointment**
+```
+Cancel an existing appointment after explicit confirmation. Input: id only (UUID from findAppointments). Do not invent ids. Only treat as cancelled on HTTP 200 success.
+```
+- Method: `POST`
+- URL: `{{APP_URL}}/api/appointments/cancel`
+- Headers: Authorization Bearer, Content-Type application/json
+- Body placeholders: `id`
 
 ### Prefer body-based cancel / reschedule (n8n-friendly)
 
@@ -162,83 +271,28 @@ Content-Type: application/json
 }
 ```
 
-### 1. listOpenDays
+### Endpoint quick reference
 
+#### listOpenDays
 ```
 GET {{APP_URL}}/api/cal-availability?from=2026-07-03&to=2026-07-10
 ```
+Returns `{ dates: { "2026-07-03": 3 } }` — open slot count per day.
 
-Returns `{ dates: { "2026-07-03": 3 } }` — number of open slots per day.
-
-### 2. checkAvailability (aka Available_Date_and_Time)
-
+#### checkAvailability
 ```
 GET {{APP_URL}}/api/cal-slots?date=2026-07-03
 ```
-
-**n8n HTTP Request Tool placeholders — define ONLY:**
-
-| Name | Value |
-|------|--------|
-| `date` | `{date}` (required, `YYYY-MM-DD`) |
-
-Do **not** add `branch`, `id`, `clinicLocationId`, or other fields — the model will invent them and n8n will reject the tool call (`additionalProperties … not allowed`). Availability is clinic-wide in Supabase; branch is applied later at booking.
-
 Returns `{ availableHours: [8, 9, 13], slotTimes: { "9": "2026-07-03T09:00:00+08:00" } }`.
 
-Use `slotTimes[hour]` as `slotIso` when booking for the scheduler accuracy.
-
-**Tool description tip:** set the tool description to something like:  
-`Check open hours for one date. Input: date (YYYY-MM-DD) only. Do not pass branch or id.`
-
-### 3. findAppointments
-
+#### findAppointments
 ```
-GET {{APP_URL}}/api/appointments?phone=+639171234567
+GET {{APP_URL}}/api/appointments?phone=9171234567
 Authorization: Bearer {{APPOINTMENT_API_SECRET}}
 ```
 
-Returns upcoming confirmed appointments for that phone number.
-
-### 4. bookAppointment
-
-```
-POST {{APP_URL}}/api/appointments
-Authorization: Bearer {{APPOINTMENT_API_SECRET}}
-Content-Type: application/json
-
-{
-  "appointmentDate": "2026-07-03",
-  "startHour": 9,
-  "clinicLocationId": "sm-southmall",
-  "patientName": "Juan Dela Cruz",
-  "patientPhone": "+639171234567",
-  "patientEmail": "",
-  "service": "Dental Cleaning",
-  "slotIso": "2026-07-03T09:00:00+08:00"
-}
-```
-
-### 5. rescheduleAppointment
-
-```
-PATCH {{APP_URL}}/api/appointments/{id}
-Authorization: Bearer {{APPOINTMENT_API_SECRET}}
-Content-Type: application/json
-
-{
-  "appointmentDate": "2026-07-04",
-  "startHour": 14,
-  "slotIso": "2026-07-04T14:00:00+08:00"
-}
-```
-
-### 6. cancelAppointment
-
-```
-DELETE {{APP_URL}}/api/appointments/{id}
-Authorization: Bearer {{APPOINTMENT_API_SECRET}}
-```
+#### bookAppointment / rescheduleAppointment / cancelAppointment
+See body examples above.
 
 ## Respond to Webhook
 
@@ -254,9 +308,19 @@ If using an AI Agent node, map its text output to the `reply` field in a **Set**
 
 ## Optional: session memory
 
-Add a **Simple Memory** node (or Redis/chat memory) keyed on `{{ $json.sessionId }}` so multi-turn conversations stay coherent across messages.
+Add a **Simple Memory** node keyed on `{{ $json.sessionId }}` so multi-turn stays coherent.
 
-The client also sends `history` (last messages) which you can pass directly to the AI model as context.
+**Token / rate-limit tips (important for Groq free TPM):**
+
+1. **Do not double context.** Either:
+   - use Simple Memory (Context Window Length = **4–6**), and **ignore** the client `history` field in the agent prompt, **or**
+   - pass client `history` only (last ~10 messages) and **omit** Simple Memory.
+2. The site now sends at most **10** history messages, each truncated to **400** chars.
+3. Keep the system prompt short; long tool descriptions also count toward TPM.
+4. Prefer `llama-3.1-8b-instant` for chat; save larger models for when needed.
+5. If you still hit TPM limits, wait ~10s or upgrade Groq Dev tier — or rely on Gemini + Groq fallback.
+
+The client sends `history` (recent messages). Prefer one context source only (see tip 1).
 
 ## Workflow diagram
 
