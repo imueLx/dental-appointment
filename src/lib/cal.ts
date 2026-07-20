@@ -303,7 +303,7 @@ export async function createCalBooking(
 export async function cancelCalBooking(
   uid: string,
   cancellationReason = "Cancelled via BrightSmile scheduler"
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; alreadyCancelled?: boolean }> {
   const apiKey = getCalApiKey();
   if (!apiKey) {
     return { ok: false, error: "CAL_API_KEY not set" };
@@ -322,13 +322,27 @@ export async function cancelCalBooking(
     }
   );
 
-  if (!res.ok) {
-    const body = await res.text();
-    console.error("Cal.com cancel booking error:", res.status, body);
-    return { ok: false, error: `Cal cancel failed (${res.status})` };
+  if (res.ok) {
+    return { ok: true };
   }
 
-  return { ok: true };
+  const body = await res.text();
+  console.error("Cal.com cancel booking error:", res.status, body);
+
+  // Already cancelled / missing on Cal — treat as success so local DB can sync.
+  if (res.status === 400 || res.status === 404) {
+    const lower = body.toLowerCase();
+    if (
+      lower.includes("already") ||
+      lower.includes("cancel") ||
+      lower.includes("not found") ||
+      lower.includes("404")
+    ) {
+      return { ok: true, alreadyCancelled: true };
+    }
+  }
+
+  return { ok: false, error: `Cal cancel failed (${res.status})` };
 }
 
 /** Reschedule a booking on Cal.com by UID. Returns new booking UID if provided. */

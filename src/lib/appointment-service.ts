@@ -239,40 +239,56 @@ export async function cancelAppointment(
     };
   }
 
+  const appointmentId = id.trim();
   const supabase = createServiceClient();
   const { data: existing, error: fetchError } = await supabase
     .from("appointments")
     .select("*")
-    .eq("id", id)
-    .neq("status", "cancelled")
-    .single();
+    .eq("id", appointmentId)
+    .maybeSingle();
 
-  if (fetchError || !existing) {
+  if (fetchError) {
+    return { success: false, error: fetchError.message };
+  }
+
+  if (!existing) {
     return { success: false, error: "Appointment not found" };
   }
 
-  if (existing.cal_booking_uid && getCalApiKey()) {
-    const calResult = await cancelCalBooking(existing.cal_booking_uid);
-    if (!calResult.ok) {
-      return {
-        success: false,
-        error: calResult.error ?? "Could not cancel on calendar.",
-      };
-    }
+  // Idempotent: already cancelled (e.g. prior request or Cal webhook).
+  if (existing.status === "cancelled") {
+    return { success: true, appointment: existing as AppointmentRow };
   }
 
+  // Mark local DB first so the dashboard/availability update immediately.
+  // Cal.com can be slow; webhook used to be the only update when this raced.
   const { data, error } = await supabase
     .from("appointments")
     .update({ status: "cancelled" })
-    .eq("id", id)
+    .eq("id", appointmentId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     return { success: false, error: error.message };
   }
 
-  return { success: true, appointment: data as AppointmentRow };
+  const cancelledRow = (data ?? existing) as AppointmentRow;
+  cancelledRow.status = "cancelled";
+
+  if (existing.cal_booking_uid && getCalApiKey()) {
+    const calResult = await cancelCalBooking(existing.cal_booking_uid);
+    if (!calResult.ok) {
+      // Local cancel already applied — do not 404/fail the patient-facing flow.
+      console.error(
+        "Cal cancel failed after local cancel:",
+        calResult.error,
+        existing.cal_booking_uid
+      );
+    }
+  }
+
+  return { success: true, appointment: cancelledRow };
 }
 
 export async function rescheduleAppointment(

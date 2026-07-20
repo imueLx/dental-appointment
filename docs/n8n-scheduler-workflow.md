@@ -92,7 +92,8 @@ Services: Dental Cleaning, Fillings & Restorations, Teeth Whitening, Root Canal 
 Always confirm details before creating, rescheduling, or cancelling.
 Use friendly, concise language. Times are in Philippine time (PHT).
 Phone numbers: accept 09… or +63 9…; the API stores them as 10-digit 9XXXXXXXXX (no leading 0 or +63). When calling findAppointments or bookAppointment, any of those formats is fine.
-Never say a booking/cancel/reschedule succeeded unless the matching tool returned success.
+Never say a booking/cancel/reschedule succeeded unless the matching tool returned HTTP 200 with cancelled/rescheduled/appointment success fields.
+If cancel returns 404, say you could not cancel and offer to look up appointments again — do NOT tell the user it was cancelled.
 ```
 
 ## HTTP Request tools for the AI Agent
@@ -106,6 +107,33 @@ Authorization: Bearer {{ $env.APPOINTMENT_API_SECRET }}
 ```
 
 Replace `{{ $env.APPOINTMENT_API_SECRET }}` with your secret or use n8n credentials.
+
+### Prefer body-based cancel / reschedule (n8n-friendly)
+
+Path params like `/appointments/{id}` are easy to misconfigure in n8n HTTP Request Tool. Use these instead:
+
+**Cancel (POST body):**
+```
+POST {{APP_URL}}/api/appointments/cancel
+Authorization: Bearer {{APPOINTMENT_API_SECRET}}
+Content-Type: application/json
+
+{ "id": "<appointment-uuid-from-findAppointments>" }
+```
+
+**Reschedule (POST body):**
+```
+POST {{APP_URL}}/api/appointments/reschedule
+Authorization: Bearer {{APPOINTMENT_API_SECRET}}
+Content-Type: application/json
+
+{
+  "id": "<appointment-uuid>",
+  "appointmentDate": "2026-07-04",
+  "startHour": 14,
+  "slotIso": "2026-07-04T14:00:00+08:00"
+}
+```
 
 ### 1. listOpenDays
 
