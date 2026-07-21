@@ -43,7 +43,6 @@ export async function postSchedulerChatMessage(
       body: JSON.stringify({
         message: input.message,
         sessionId: input.sessionId,
-        history: input.history,
       }),
       signal: controller.signal,
     });

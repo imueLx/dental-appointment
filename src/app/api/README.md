@@ -22,10 +22,11 @@ Proxies messages from the site chat widget to your n8n webhook. The webhook URL 
 ```json
 {
   "message": "I want to book a cleaning tomorrow",
-  "sessionId": "uuid-from-client",
-  "history": [{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }]
+  "sessionId": "uuid-from-client"
 }
 ```
+
+Conversation context is kept in n8n Simple Memory (keyed by `sessionId`). The proxy does not forward prior message history.
 
 **Response:**
 ```json

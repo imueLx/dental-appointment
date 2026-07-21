@@ -25,8 +25,10 @@ import {
   formatDateKey,
   hourToTimeString,
   isSlotBookable,
+  normalizeStartHour,
   parseDateKey,
   parseTimeToHour,
+  resolveAppointmentDate,
 } from "@/lib/slots";
 import {
   bookingSchema,
@@ -302,10 +304,21 @@ export async function rescheduleAppointment(
     };
   }
 
-  const { appointmentDate, startHour, slotIso } = params;
+  const appointmentDate = resolveAppointmentDate(
+    params.appointmentDate,
+    params.slotIso
+  );
+  const startHour = normalizeStartHour(params.startHour);
+  const { slotIso } = params;
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(appointmentDate)) {
-    return { success: false, error: "Invalid date format" };
+  if (!appointmentDate) {
+    return {
+      success: false,
+      error: `Invalid date format (got ${JSON.stringify(params.appointmentDate)}; use YYYY-MM-DD or a valid slotIso)`,
+    };
+  }
+  if (startHour === undefined) {
+    return { success: false, error: "Invalid startHour" };
   }
 
   const supabase = createServiceClient();

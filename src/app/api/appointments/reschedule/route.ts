@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rescheduleAppointment } from "@/lib/appointment-service";
-import { parseTimeToHour } from "@/lib/slots";
+import {
+  normalizeStartHour,
+  parseTimeToHour,
+  resolveAppointmentDate,
+} from "@/lib/slots";
 
 function verifyApiKey(request: NextRequest): boolean {
   const secret = process.env.APPOINTMENT_API_SECRET;
@@ -23,24 +27,31 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const id = typeof body.id === "string" ? body.id.trim() : "";
+    const slotIso =
+      typeof body.slotIso === "string" ? body.slotIso.trim() : body.slotIso;
+    // LLMs sometimes truncate appointmentDate (e.g. "2026-0"); recover from slotIso.
+    const appointmentDate = resolveAppointmentDate(
+      body.appointmentDate,
+      slotIso
+    );
     const startHour =
-      body.startHour ??
+      normalizeStartHour(body.startHour) ??
       (body.startTime ? parseTimeToHour(body.startTime) : undefined);
 
-    if (!id || !body.appointmentDate || startHour === undefined) {
+    if (!id || !appointmentDate || startHour === undefined) {
       return NextResponse.json(
         {
           error:
-            "Missing required fields: id, appointmentDate, startHour (or startTime)",
+            "Missing required fields: id, appointmentDate (YYYY-MM-DD), startHour (or startTime). If appointmentDate is incomplete, include a valid slotIso.",
         },
         { status: 400 }
       );
     }
 
     const result = await rescheduleAppointment(id, {
-      appointmentDate: body.appointmentDate,
+      appointmentDate,
       startHour,
-      slotIso: body.slotIso,
+      slotIso,
     });
 
     if (!result.success) {

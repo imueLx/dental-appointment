@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, CalendarClock, CalendarSearch, Loader2, RotateCcw, SendHorizonal, XCircle } from "lucide-react";
+import {
+  Bot,
+  CalendarClock,
+  CalendarSearch,
+  Loader2,
+  MessageSquarePlus,
+  RotateCcw,
+  SendHorizonal,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +19,6 @@ import {
   type ChatMessageData,
 } from "@/components/chat/chat-message";
 import { cn } from "@/lib/utils";
-import { SCHEDULER_HISTORY_LIMIT } from "@/lib/n8n/scheduler-schema";
 
 const WELCOME_MESSAGE: ChatMessageData = {
   id: "welcome",
@@ -171,6 +179,14 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
     }
   }, [isOpen]);
 
+  function startNewChat() {
+    if (isLoading) return;
+    clearChatStorage();
+    setMessages([WELCOME_MESSAGE]);
+    setInput("");
+    setSessionId(createFreshSessionId());
+  }
+
   async function sendMessage(textOverride?: string) {
     const text = (textOverride ?? input).trim();
     if (!text || isLoading) return;
@@ -181,23 +197,18 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
       content: text,
     };
 
-    const history = messages
-      .filter((m) => m.id !== "welcome")
-      .map(({ role, content }) => ({ role, content }))
-      .slice(-SCHEDULER_HISTORY_LIMIT);
-
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
 
     try {
+      // n8n Simple Memory is keyed on sessionId — send only the new turn.
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
           sessionId,
-          history,
         }),
       });
 
@@ -289,6 +300,21 @@ export function ChatPanel({ className, isOpen = true }: ChatPanelProps) {
       </div>
 
       <div className="shrink-0 border-t bg-background/95 px-4 pt-3 pb-safe backdrop-blur-sm max-sm:pt-4">
+        {!showQuickPrompts && (
+          <div className="mb-2 flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+              disabled={isLoading}
+              onClick={startNewChat}
+            >
+              <MessageSquarePlus className="size-3.5" />
+              New chat
+            </Button>
+          </div>
+        )}
         <div className="flex items-end gap-2.5">
           <Textarea
             ref={inputRef}

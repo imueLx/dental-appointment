@@ -43,11 +43,7 @@ Create a **Webhook** node:
 ```json
 {
   "message": "I need to book a cleaning",
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "history": [
-    { "role": "user", "content": "Hi" },
-    { "role": "assistant", "content": "Hello! How can I help?" }
-  ]
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -57,8 +53,7 @@ The Next.js proxy forwards the following JSON to your n8n webhook:
 
 Request keys:
 - `message` (string, 1–2000 chars)
-- `sessionId` (optional UUID)
-- `history` (optional, up to 50 items of `{ role: "user" | "assistant", content: string }`)
+- `sessionId` (optional UUID — required for Simple Memory continuity)
 
 Your n8n workflow should respond with JSON:
 - `reply` (string, preferred)
@@ -164,7 +159,9 @@ Do not add generic closings like “If you need further assistance”.
 
 ## HTTP Request tools for the AI Agent
 
-Configure each tool as an HTTP Request Tool on the AI Agent. Use short descriptions (below) and define **only** the listed placeholders — extra fields cause `additionalProperties … not allowed`.
+Configure each tool as an HTTP Request Tool on the AI Agent. Use short descriptions (below) and define **only** the listed `$fromAI` keys — extra fields cause `additionalProperties … not allowed`.
+
+**Important (n8n 1.90+ / `httpRequestTool`):** do **not** use `{placeholder}` in the body/URL. That literal string is sent to the API. Use `$fromAI(...)` expressions instead (or click ✨ on each field). Set the JSON body editor to **Expression** mode when pasting.
 
 **Auth header for appointment tools (3–6):**
 
@@ -179,25 +176,25 @@ Authorization: Bearer {{APPOINTMENT_API_SECRET}}
 List how many open appointment slots exist for each day in a date range. Inputs: from (YYYY-MM-DD), to (YYYY-MM-DD) only. Do not pass branch, service, id, phone, or time. Prefer a short range such as 7 days.
 ```
 - Method: `GET`
-- URL: `{{APP_URL}}/api/cal-availability?from={from}&to={to}`
-- Placeholders: `from`, `to`
+- URL: `={{ $env.APP_URL }}/api/cal-availability?from={{ $fromAI('from', 'Start date YYYY-MM-DD', 'string') }}&to={{ $fromAI('to', 'End date YYYY-MM-DD', 'string') }}`
+- `$fromAI` keys: `from`, `to`
 
 **2. checkAvailability**
 ```
 Check open hours for one date. Input: date (YYYY-MM-DD) only. Do not pass branch, service, id, phone, or time. Returns availableHours and slotTimes. Use slotTimes[hour] as slotIso when booking or rescheduling.
 ```
 - Method: `GET`
-- URL: `{{APP_URL}}/api/cal-slots?date={date}`
-- Placeholders: `date`
+- URL: `={{ $env.APP_URL }}/api/cal-slots?date={{ $fromAI('date', 'Date YYYY-MM-DD', 'string') }}`
+- `$fromAI` keys: `date`
 
 **3. findAppointments**
 ```
 Find upcoming confirmed appointments by patient phone. Input: phone only (09…, +63 9…, or 9XXXXXXXXX). Returns appointment id, date, time, service, and notes/branch. Use this before reschedule or cancel. Do not invent ids.
 ```
 - Method: `GET`
-- URL: `{{APP_URL}}/api/appointments?phone={phone}`
+- URL: `={{ $env.APP_URL }}/api/appointments?phone={{ $fromAI('phone', 'Patient phone 09… or 9XXXXXXXXX', 'string') }}`
 - Headers: Authorization Bearer
-- Placeholders: `phone`
+- `$fromAI` keys: `phone`
 
 **4. bookAppointment**
 ```
@@ -206,16 +203,38 @@ Create a confirmed appointment after the patient explicitly confirms a summary. 
 - Method: `POST`
 - URL: `{{APP_URL}}/api/appointments/book` (or `/api/appointments`)
 - Headers: Authorization Bearer, Content-Type application/json
-- Body placeholders: fields above
+- JSON body (Expression mode):
+
+```json
+{
+  "appointmentDate": "{{ $fromAI('appointmentDate', 'YYYY-MM-DD', 'string') }}",
+  "startHour": "{{ $fromAI('startHour', 'Hour 8|9|10|11|13|14|15|16', 'number') }}",
+  "clinicLocationId": "{{ $fromAI('clinicLocationId', 'sm-southmall or sm-megamall', 'string') }}",
+  "patientName": "{{ $fromAI('patientName', 'Full name', 'string') }}",
+  "patientPhone": "{{ $fromAI('patientPhone', 'Normalized 9XXXXXXXXX', 'string') }}",
+  "patientEmail": "{{ $fromAI('patientEmail', 'Optional email', 'string') }}",
+  "service": "{{ $fromAI('service', 'Exact service name', 'string') }}",
+  "slotIso": "{{ $fromAI('slotIso', 'Exact slotIso from checkAvailability', 'string') }}"
+}
+```
 
 **5. rescheduleAppointment**
 ```
-Reschedule an existing appointment after explicit confirmation. Inputs only: id (UUID from findAppointments), appointmentDate (YYYY-MM-DD), startHour (8|9|10|11|13|14|15|16), slotIso (exact value from checkAvailability). Do not pass branch, service, phone, or invented ids.
+Reschedule an existing appointment after explicit confirmation. Inputs only: id (UUID from findAppointments), appointmentDate (full YYYY-MM-DD, never truncated), startHour (8|9|10|11|13|14|15|16), slotIso (exact value from checkAvailability). Example: appointmentDate 2026-07-31 with slotIso 2026-07-31T16:00:00+08:00. Do not pass branch, service, phone, or invented ids.
 ```
 - Method: `POST`
 - URL: `{{APP_URL}}/api/appointments/reschedule`
 - Headers: Authorization Bearer, Content-Type application/json
-- Body placeholders: `id`, `appointmentDate`, `startHour`, `slotIso`
+- JSON body (Expression mode):
+
+```json
+{
+  "id": "{{ $fromAI('id', 'UUID from findAppointments', 'string') }}",
+  "appointmentDate": "{{ $fromAI('appointmentDate', 'YYYY-MM-DD only, not ISO datetime', 'string') }}",
+  "startHour": "{{ $fromAI('startHour', 'Hour 8|9|10|11|13|14|15|16', 'number') }}",
+  "slotIso": "{{ $fromAI('slotIso', 'Exact slotIso from checkAvailability', 'string') }}"
+}
+```
 
 **6. cancelAppointment**
 ```
@@ -224,7 +243,13 @@ Cancel an existing appointment after explicit confirmation. Input: id only (UUID
 - Method: `POST`
 - URL: `{{APP_URL}}/api/appointments/cancel`
 - Headers: Authorization Bearer, Content-Type application/json
-- Body placeholders: `id`
+- JSON body (Expression mode):
+
+```json
+{
+  "id": "{{ $fromAI('id', 'UUID from findAppointments', 'string') }}"
+}
+```
 
 ### Prefer body-based cancel / reschedule (n8n-friendly)
 
@@ -312,15 +337,12 @@ Add a **Simple Memory** node keyed on `{{ $json.sessionId }}` so multi-turn stay
 
 **Token / rate-limit tips (important for Groq free TPM):**
 
-1. **Do not double context.** Either:
-   - use Simple Memory (Context Window Length = **4–6**), and **ignore** the client `history` field in the agent prompt, **or**
-   - pass client `history` only (last ~10 messages) and **omit** Simple Memory.
-2. The site now sends at most **10** history messages, each truncated to **400** chars.
-3. Keep the system prompt short; long tool descriptions also count toward TPM.
-4. Prefer `llama-3.1-8b-instant` for chat; save larger models for when needed.
-5. If you still hit TPM limits, wait ~10s or upgrade Groq Dev tier — or rely on Gemini + Groq fallback.
+1. **Use Simple Memory only** for conversation context. The site no longer forwards a client `history` array — only `message` + `sessionId`. Keep Context Window Length around **4–6**.
+2. Keep the system prompt short; long tool descriptions also count toward TPM.
+3. Prefer `llama-3.1-8b-instant` for chat; save larger models for when needed.
+4. If you still hit TPM limits, wait ~10s or upgrade Groq Dev tier — or rely on Gemini + Groq fallback.
 
-The client sends `history` (recent messages). Prefer one context source only (see tip 1).
+A **New chat** action in the widget rotates `sessionId`, which starts a fresh memory thread in n8n.
 
 ## Workflow diagram
 

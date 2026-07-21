@@ -3,7 +3,11 @@ import {
   cancelAppointment,
   rescheduleAppointment,
 } from "@/lib/appointment-service";
-import { parseTimeToHour } from "@/lib/slots";
+import {
+  normalizeStartHour,
+  parseTimeToHour,
+  resolveAppointmentDate,
+} from "@/lib/slots";
 
 function verifyApiKey(request: NextRequest): boolean {
   const secret = process.env.APPOINTMENT_API_SECRET;
@@ -24,11 +28,17 @@ export async function PATCH(
 
   try {
     const body = await request.json();
+    const slotIso =
+      typeof body.slotIso === "string" ? body.slotIso.trim() : body.slotIso;
+    const appointmentDate = resolveAppointmentDate(
+      body.appointmentDate,
+      slotIso
+    );
     const startHour =
-      body.startHour ??
+      normalizeStartHour(body.startHour) ??
       (body.startTime ? parseTimeToHour(body.startTime) : undefined);
 
-    if (!body.appointmentDate || startHour === undefined) {
+    if (!appointmentDate || startHour === undefined) {
       return NextResponse.json(
         { error: "Missing required fields: appointmentDate, startHour" },
         { status: 400 }
@@ -36,9 +46,9 @@ export async function PATCH(
     }
 
     const result = await rescheduleAppointment(id, {
-      appointmentDate: body.appointmentDate,
+      appointmentDate,
       startHour,
-      slotIso: body.slotIso,
+      slotIso,
     });
 
     if (!result.success) {

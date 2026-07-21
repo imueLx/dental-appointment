@@ -221,3 +221,44 @@ export function getWeekRange(dates: Date[]): { from: string; to: string } {
 export function parseDateKey(dateKey: string): Date {
   return parseISO(dateKey);
 }
+
+/**
+ * Normalize n8n/AI date inputs to YYYY-MM-DD.
+ * Accepts plain dates, ISO datetimes, and values wrapped in quotes/whitespace.
+ */
+export function normalizeAppointmentDate(value: unknown): string | null {
+  if (value == null) return null;
+  let s = String(value).trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const isoPrefix = s.match(/^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/);
+  return isoPrefix ? isoPrefix[1] : null;
+}
+
+/**
+ * Prefer an explicit date; if missing/truncated (common LLM bug), derive from slotIso.
+ */
+export function resolveAppointmentDate(
+  appointmentDate: unknown,
+  slotIso?: unknown
+): string | null {
+  return (
+    normalizeAppointmentDate(appointmentDate) ??
+    normalizeAppointmentDate(slotIso)
+  );
+}
+
+/** Coerce n8n/AI hour inputs (number or numeric string) to a finite number. */
+export function normalizeStartHour(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value.trim().replace(/^["']|["']$/g, ""));
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { message, sessionId, history } = parsed.data as SchedulerChatMessageInput;
+  const { message, sessionId } = parsed.data as SchedulerChatMessageInput;
   const rateKey = sessionId ?? request.headers.get("x-forwarded-for") ?? "anonymous";
 
   if (!checkRateLimit(rateKey)) {
@@ -51,10 +51,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Context lives in n8n Simple Memory (keyed by sessionId) — do not forward history.
     const { reply } = await postSchedulerChatMessage({
       message,
       sessionId,
-      history,
     });
     return NextResponse.json({ reply });
   } catch (error) {
