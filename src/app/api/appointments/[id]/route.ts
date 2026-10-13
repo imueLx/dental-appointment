@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  cancelResultToResponse,
+  rescheduleResultToResponse,
+} from "@/lib/api-booking-response";
+import {
   cancelAppointment,
   rescheduleAppointment,
 } from "@/lib/appointment-service";
+import { logErrorWithCause } from "@/lib/log-error";
 import {
   normalizeStartHour,
   parseTimeToHour,
@@ -21,7 +26,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!verifyApiKey(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { rescheduled: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   const { id } = await params;
@@ -40,7 +48,12 @@ export async function PATCH(
 
     if (!appointmentDate || startHour === undefined) {
       return NextResponse.json(
-        { error: "Missing required fields: appointmentDate, startHour" },
+        {
+          rescheduled: false,
+          error: "validation",
+          field: !appointmentDate ? "appointmentDate" : "startHour",
+          message: "Missing required fields: appointmentDate, startHour",
+        },
         { status: 400 }
       );
     }
@@ -51,14 +64,13 @@ export async function PATCH(
       slotIso,
     });
 
-    if (!result.success) {
-      const status = result.error.includes("just taken") ? 409 : 400;
-      return NextResponse.json({ error: result.error }, { status });
-    }
-
-    return NextResponse.json({ appointment: result.appointment });
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return rescheduleResultToResponse(result);
+  } catch (err) {
+    logErrorWithCause("PATCH /api/appointments/[id]", err);
+    return NextResponse.json(
+      { rescheduled: false, error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 }
 
@@ -67,16 +79,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   if (!verifyApiKey(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { cancelled: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   const { id } = await params;
   const result = await cancelAppointment(id);
-
-  if (!result.success) {
-    const status = result.error === "Appointment not found" ? 404 : 400;
-    return NextResponse.json({ error: result.error }, { status });
-  }
-
-  return NextResponse.json({ appointment: result.appointment });
+  return cancelResultToResponse(result);
 }

@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cleanup:orphaned-cal": "node --env-file=.env.local scripts/cleanup-orphaned-cal-bookings.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -43,6 +46,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

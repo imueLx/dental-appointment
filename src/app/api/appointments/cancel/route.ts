@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cancelResultToResponse } from "@/lib/api-booking-response";
 import { cancelAppointment } from "@/lib/appointment-service";
+import { logErrorWithCause } from "@/lib/log-error";
 
 function verifyApiKey(request: NextRequest): boolean {
   const secret = process.env.APPOINTMENT_API_SECRET;
@@ -11,12 +13,13 @@ function verifyApiKey(request: NextRequest): boolean {
 /**
  * POST /api/appointments/cancel
  * Body: { "id": "<appointment-uuid>" }
- *
- * Prefer this for n8n (id in JSON body) — more reliable than DELETE .../appointments/{id}.
  */
 export async function POST(request: NextRequest) {
   if (!verifyApiKey(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { cancelled: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   try {
@@ -24,24 +27,23 @@ export async function POST(request: NextRequest) {
     const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) {
       return NextResponse.json(
-        { error: "Missing required field: id (appointment UUID)" },
+        {
+          cancelled: false,
+          error: "validation",
+          field: "id",
+          message: "Missing required field: id (appointment UUID)",
+        },
         { status: 400 }
       );
     }
 
     const result = await cancelAppointment(id);
-
-    if (!result.success) {
-      const status = result.error === "Appointment not found" ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
-    }
-
-    return NextResponse.json({
-      appointment: result.appointment,
-      cancelled: true,
-      message: "Appointment cancelled successfully.",
-    });
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return cancelResultToResponse(result);
+  } catch (err) {
+    logErrorWithCause("POST /api/appointments/cancel", err);
+    return NextResponse.json(
+      { cancelled: false, error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rescheduleResultToResponse } from "@/lib/api-booking-response";
 import { rescheduleAppointment } from "@/lib/appointment-service";
+import { logErrorWithCause } from "@/lib/log-error";
 import {
   normalizeStartHour,
   parseTimeToHour,
@@ -16,12 +18,13 @@ function verifyApiKey(request: NextRequest): boolean {
 /**
  * POST /api/appointments/reschedule
  * Body: { id, appointmentDate, startHour, slotIso? }
- *
- * Prefer this for n8n (id in JSON body) — more reliable than PATCH .../appointments/{id}.
  */
 export async function POST(request: NextRequest) {
   if (!verifyApiKey(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { rescheduled: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   try {
@@ -29,7 +32,6 @@ export async function POST(request: NextRequest) {
     const id = typeof body.id === "string" ? body.id.trim() : "";
     const slotIso =
       typeof body.slotIso === "string" ? body.slotIso.trim() : body.slotIso;
-    // LLMs sometimes truncate appointmentDate (e.g. "2026-0"); recover from slotIso.
     const appointmentDate = resolveAppointmentDate(
       body.appointmentDate,
       slotIso
@@ -39,9 +41,17 @@ export async function POST(request: NextRequest) {
       (body.startTime ? parseTimeToHour(body.startTime) : undefined);
 
     if (!id || !appointmentDate || startHour === undefined) {
+      const field = !id
+        ? "id"
+        : !appointmentDate
+          ? "appointmentDate"
+          : "startHour";
       return NextResponse.json(
         {
-          error:
+          rescheduled: false,
+          error: "validation",
+          field,
+          message:
             "Missing required fields: id, appointmentDate (YYYY-MM-DD), startHour (or startTime). If appointmentDate is incomplete, include a valid slotIso.",
         },
         { status: 400 }
@@ -54,22 +64,12 @@ export async function POST(request: NextRequest) {
       slotIso,
     });
 
-    if (!result.success) {
-      const status =
-        result.error === "Appointment not found"
-          ? 404
-          : result.error.includes("just taken")
-            ? 409
-            : 400;
-      return NextResponse.json({ error: result.error }, { status });
-    }
-
-    return NextResponse.json({
-      appointment: result.appointment,
-      rescheduled: true,
-      message: "Appointment rescheduled successfully.",
-    });
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return rescheduleResultToResponse(result);
+  } catch (err) {
+    logErrorWithCause("POST /api/appointments/reschedule", err);
+    return NextResponse.json(
+      { rescheduled: false, error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookResultToResponse } from "@/lib/api-booking-response";
 import { createAppointment } from "@/lib/appointment-service";
+import { logErrorWithCause } from "@/lib/log-error";
 import { parseTimeToHour } from "@/lib/slots";
 
 function verifyApiKey(request: NextRequest): boolean {
@@ -13,36 +15,61 @@ function verifyApiKey(request: NextRequest): boolean {
  * POST /api/appointments/book
  * Body: appointmentDate, startHour, clinicLocationId, patientName,
  *       patientPhone, patientEmail?, service, slotIso?
- *
- * n8n-friendly alias of POST /api/appointments (same booking logic).
+ * Optional header: Idempotency-Key
  */
 export async function POST(request: NextRequest) {
   if (!verifyApiKey(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { booked: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
   try {
     const body = await request.json();
-    const startHour =
+    const startHourRaw =
       body.startHour ??
       (body.startTime ? parseTimeToHour(body.startTime) : undefined);
+    const startHour =
+      typeof startHourRaw === "string"
+        ? Number(startHourRaw)
+        : startHourRaw;
 
     if (
       !body.appointmentDate ||
       startHour === undefined ||
+      (typeof startHour === "number" && !Number.isFinite(startHour)) ||
       !body.clinicLocationId ||
       !body.patientName ||
       !body.patientPhone ||
       !body.service
     ) {
+      const missing = [
+        !body.appointmentDate && "appointmentDate",
+        (startHour === undefined ||
+          (typeof startHour === "number" && !Number.isFinite(startHour))) &&
+          "startHour",
+        !body.clinicLocationId && "clinicLocationId",
+        !body.patientName && "patientName",
+        !body.patientPhone && "patientPhone",
+        !body.service && "service",
+      ].filter(Boolean)[0] as string;
+
       return NextResponse.json(
         {
-          error:
-            "Missing required fields: appointmentDate, startHour, clinicLocationId, patientName, patientPhone, service",
+          booked: false,
+          error: "validation",
+          field: missing,
+          message: `Missing required field: ${missing}`,
         },
         { status: 400 }
       );
     }
+
+    const idempotencyKey =
+      request.headers.get("idempotency-key") ??
+      request.headers.get("Idempotency-Key") ??
+      undefined;
 
     const result = await createAppointment(
       {
@@ -50,27 +77,15 @@ export async function POST(request: NextRequest) {
         startHour,
         patientEmail: body.patientEmail ?? "",
       },
-      { slotIso: body.slotIso }
+      { slotIso: body.slotIso, idempotencyKey }
     );
 
-    if (!result.success) {
-      const status = result.error.includes("just taken") ? 409 : 400;
-      return NextResponse.json({ error: result.error }, { status });
-    }
-
+    return bookResultToResponse(result);
+  } catch (err) {
+    logErrorWithCause("POST /api/appointments/book", err);
     return NextResponse.json(
-      {
-        appointment: {
-          id: result.id,
-          calSynced: result.calSynced,
-          calBookingUid: result.calBookingUid,
-        },
-        booked: true,
-        message: "Appointment booked successfully.",
-      },
-      { status: 201 }
+      { booked: false, error: "Invalid request body" },
+      { status: 400 }
     );
-  } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 }

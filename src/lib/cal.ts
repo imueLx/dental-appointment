@@ -1,6 +1,11 @@
 import { addDays, format, parseISO } from "date-fns";
 import { normalizeCalLink } from "@/lib/env";
 import { CLINIC_TIMEZONE } from "@/lib/constants";
+import {
+  normalizePhMobile,
+  phoneLookupSuffix,
+  toPhE164,
+} from "@/lib/phone";
 import { LUNCH_START, SLOT_HOURS } from "@/lib/slots";
 
 export interface ParsedCalLink {
@@ -223,6 +228,45 @@ export interface CalBookingResult {
   ok: boolean;
   uid?: string;
   error?: string;
+  /** Set when Cal rejects because the slot/attendee is already booked. */
+  code?: "already_booked";
+}
+
+export function isCalAlreadyBookedMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  return /already has booking|already booked|not available/i.test(message);
+}
+
+/** Compare two slot ISO strings (ignore ms / equivalent instants). */
+export function slotInstantsEqual(a: string, b: string): boolean {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isFinite(ta) && Number.isFinite(tb)) {
+    return Math.abs(ta - tb) < 60_000;
+  }
+  return (
+    a.replace(/\.\d{3}/, "").replace(/Z$/, "+00:00") ===
+    b.replace(/\.\d{3}/, "").replace(/Z$/, "+00:00")
+  );
+}
+
+/** Wall-clock date YYYY-MM-DD in clinic TZ from a booking start ISO. */
+export function dateKeyFromSlotIso(
+  iso: string,
+  timeZone: string = getClinicTimeZone()
+): string | null {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return fmt.format(new Date(iso));
+  } catch {
+    const m = iso.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m?.[1] ?? null;
+  }
 }
 
 /** Create a booking on Cal.com (syncs your Cal calendar). */
@@ -235,67 +279,88 @@ export async function createCalBooking(
     return { ok: false, error: "CAL_API_KEY not set" };
   }
 
-  const res = await fetch("https://api.cal.com/v2/bookings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "cal-api-version": "2024-08-13",
-    },
-    body: JSON.stringify({
-      username: parsed.username,
-      eventTypeSlug: parsed.eventTypeSlug,
-      start: params.start,
-      attendee: {
-        name: params.name,
-        email: params.email,
-        timeZone: params.timeZone ?? getClinicTimeZone(),
-        ...(params.phone ? { phoneNumber: params.phone } : {}),
-      },
-      location: buildCalBookingLocation(params.clinicAddress),
-      bookingFieldsResponses: buildCalBookingFieldResponses(
-        params.clinicCalValue,
-        params.bookingFieldsResponses
-      ),
-      metadata: params.metadata ?? {},
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    console.error("Cal.com create booking error:", res.status, body);
-    let message =
-      "This time is no longer available on our calendar. Please choose another slot.";
-    try {
-      const json = JSON.parse(body) as {
-        error?: { message?: string };
-      };
-      const calMessage = json.error?.message;
-      if (calMessage?.includes("Missing required booking field")) {
-        message =
-          "Calendar setup issue — a required booking field is missing. Please contact the clinic.";
-      } else if (
-        calMessage?.includes("Invalid option") ||
-        calMessage?.toLowerCase().includes("location")
-      ) {
-        message =
-          "Calendar location mismatch — enable In-person / Address on the Cal.com event type (not Google Meet only).";
-      } else if (calMessage) {
-        message = calMessage;
-      }
-    } catch {
-      // use default message
-    }
-    return { ok: false, error: message };
-  }
-
   try {
-    const json = (await res.json()) as {
-      data?: { uid?: string };
+    const res = await fetch("https://api.cal.com/v2/bookings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "cal-api-version": "2024-08-13",
+      },
+      body: JSON.stringify({
+        username: parsed.username,
+        eventTypeSlug: parsed.eventTypeSlug,
+        start: params.start,
+        attendee: {
+          name: params.name,
+          email: params.email,
+          timeZone: params.timeZone ?? getClinicTimeZone(),
+          ...(params.phone ? { phoneNumber: params.phone } : {}),
+        },
+        location: buildCalBookingLocation(params.clinicAddress),
+        bookingFieldsResponses: buildCalBookingFieldResponses(
+          params.clinicCalValue,
+          params.bookingFieldsResponses
+        ),
+        metadata: params.metadata ?? {},
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("Cal.com create booking error:", res.status, body);
+      let message =
+        "This time is no longer available on our calendar. Please choose another slot.";
+      try {
+        const json = JSON.parse(body) as {
+          error?: { message?: string };
+        };
+        const calMessage = json.error?.message;
+        if (calMessage?.includes("Missing required booking field")) {
+          message =
+            "Calendar setup issue — a required booking field is missing. Please contact the clinic.";
+        } else if (
+          calMessage?.includes("Invalid option") ||
+          calMessage?.toLowerCase().includes("location")
+        ) {
+          message =
+            "Calendar location mismatch — enable In-person / Address on the Cal.com event type (not Google Meet only).";
+        } else if (calMessage) {
+          message = calMessage;
+        }
+      } catch {
+        // use default message
+      }
+      return {
+        ok: false,
+        error: message,
+        ...(isCalAlreadyBookedMessage(message)
+          ? { code: "already_booked" as const }
+          : {}),
+      };
+    }
+
+    try {
+      const json = (await res.json()) as {
+        data?: { uid?: string };
+      };
+      return { ok: true, uid: json.data?.uid };
+    } catch {
+      return { ok: true };
+    }
+  } catch (err) {
+    const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+    console.error("Cal.com create booking fetch failed:", {
+      message: err instanceof Error ? err.message : String(err),
+      cause:
+        cause instanceof Error
+          ? { name: cause.name, message: cause.message, code: (cause as NodeJS.ErrnoException).code }
+          : cause,
+    });
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Calendar request failed",
     };
-    return { ok: true, uid: json.data?.uid };
-  } catch {
-    return { ok: true };
   }
 }
 
@@ -393,6 +458,260 @@ export async function rescheduleCalBooking(
   } catch {
     return { ok: true };
   }
+}
+
+export type CalListedBooking = {
+  uid: string;
+  title?: string;
+  status?: string;
+  start?: string;
+  attendeeName?: string;
+  attendeeEmail?: string;
+  attendeePhone?: string;
+  metadata?: Record<string, string>;
+};
+
+export type ListCalBookingsOptions = {
+  status?: string;
+  take?: number;
+  afterStart?: string;
+  beforeEnd?: string;
+  attendeeEmail?: string;
+  attendeeName?: string;
+};
+
+/** List Cal.com bookings (orphan cleanup, slot exclusion, phone reconcile). */
+export async function listCalBookings(
+  options?: ListCalBookingsOptions
+): Promise<{ ok: boolean; bookings: CalListedBooking[]; error?: string }> {
+  const apiKey = getCalApiKey();
+  if (!apiKey) {
+    return { ok: false, bookings: [], error: "CAL_API_KEY not set" };
+  }
+
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  params.set("take", String(options?.take ?? 100));
+  if (options?.afterStart) params.set("afterStart", options.afterStart);
+  if (options?.beforeEnd) params.set("beforeEnd", options.beforeEnd);
+  if (options?.attendeeEmail) params.set("attendeeEmail", options.attendeeEmail);
+  if (options?.attendeeName) params.set("attendeeName", options.attendeeName);
+
+  try {
+    const res = await fetch(`https://api.cal.com/v2/bookings?${params}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "cal-api-version": "2024-08-13",
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("Cal.com list bookings error:", res.status, body);
+      return { ok: false, bookings: [], error: `Cal API ${res.status}` };
+    }
+
+    const json = (await res.json()) as {
+      data?: Array<{
+        uid?: string;
+        title?: string;
+        status?: string;
+        start?: string;
+        startTime?: string;
+        metadata?: Record<string, string>;
+        attendees?: Array<{
+          name?: string;
+          email?: string;
+          phoneNumber?: string;
+        }>;
+      }>;
+    };
+
+    const bookings: CalListedBooking[] = (json.data ?? [])
+      .filter((b): b is typeof b & { uid: string } => Boolean(b.uid))
+      .map((b) => ({
+        uid: b.uid,
+        title: b.title,
+        status: b.status,
+        start: b.start ?? b.startTime,
+        attendeeName: b.attendees?.[0]?.name,
+        attendeeEmail: b.attendees?.[0]?.email,
+        attendeePhone: b.attendees?.[0]?.phoneNumber,
+        metadata: b.metadata,
+      }));
+
+    return { ok: true, bookings };
+  } catch (err) {
+    const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+    console.error("Cal.com list bookings fetch failed:", {
+      message: err instanceof Error ? err.message : String(err),
+      cause:
+        cause instanceof Error
+          ? { name: cause.name, message: cause.message, code: (cause as NodeJS.ErrnoException).code }
+          : cause,
+    });
+    return {
+      ok: false,
+      bookings: [],
+      error: err instanceof Error ? err.message : "Cal list fetch failed",
+    };
+  }
+}
+
+function phonesMatch(
+  a: string | undefined,
+  b: string | undefined
+): boolean {
+  if (!a || !b) return false;
+  const sa = phoneLookupSuffix(a);
+  const sb = phoneLookupSuffix(b);
+  return Boolean(sa && sb && sa === sb);
+}
+
+export function calBookingMatchesAttendee(
+  booking: CalListedBooking,
+  attendee: { phone?: string; name?: string; email?: string }
+): boolean {
+  if (attendee.phone && phonesMatch(booking.attendeePhone, attendee.phone)) {
+    return true;
+  }
+  if (
+    attendee.email &&
+    booking.attendeeEmail &&
+    booking.attendeeEmail.toLowerCase() === attendee.email.toLowerCase()
+  ) {
+    return true;
+  }
+  // Synthetic emails used when patientEmail is empty: booking+9XXXXXXXXX@...
+  if (attendee.phone && booking.attendeeEmail) {
+    const digits = normalizePhMobile(attendee.phone);
+    if (
+      digits &&
+      booking.attendeeEmail.toLowerCase().includes(`booking+${digits}@`)
+    ) {
+      return true;
+    }
+  }
+  if (
+    attendee.name &&
+    booking.attendeeName &&
+    booking.attendeeName.trim().toLowerCase() ===
+      attendee.name.trim().toLowerCase()
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Find a Cal booking at the given slot. Prefers same-attendee match;
+ * otherwise returns any booking occupying the slot.
+ */
+export async function findCalBookingAtSlot(
+  slotIso: string,
+  attendee?: { phone?: string; name?: string; email?: string }
+): Promise<{
+  booking: CalListedBooking | null;
+  samePatient: boolean;
+}> {
+  const dateKey = dateKeyFromSlotIso(slotIso);
+  const dayStart = dateKey
+    ? new Date(`${dateKey}T00:00:00+08:00`).toISOString()
+    : new Date(Date.parse(slotIso) - 12 * 3600_000).toISOString();
+  const dayEnd = dateKey
+    ? new Date(`${dateKey}T23:59:59.999+08:00`).toISOString()
+    : new Date(Date.parse(slotIso) + 12 * 3600_000).toISOString();
+
+  const listed = await listCalBookings({
+    status: "upcoming",
+    afterStart: dayStart,
+    beforeEnd: dayEnd,
+    take: 100,
+  });
+
+  if (!listed.ok) {
+    return { booking: null, samePatient: false };
+  }
+
+  const atSlot = listed.bookings.filter(
+    (b) => b.start && slotInstantsEqual(b.start, slotIso)
+  );
+
+  if (!atSlot.length) {
+    return { booking: null, samePatient: false };
+  }
+
+  if (attendee) {
+    const mine = atSlot.find((b) => calBookingMatchesAttendee(b, attendee));
+    if (mine) return { booking: mine, samePatient: true };
+  }
+
+  return { booking: atSlot[0], samePatient: false };
+}
+
+/** Booked start hours on Cal.com for a clinic date (Asia/Manila wall clock). */
+export async function getCalBookedHoursForDate(
+  date: string
+): Promise<number[]> {
+  const dayStart = new Date(`${date}T00:00:00+08:00`).toISOString();
+  const dayEnd = new Date(`${date}T23:59:59.999+08:00`).toISOString();
+
+  const listed = await listCalBookings({
+    status: "upcoming",
+    afterStart: dayStart,
+    beforeEnd: dayEnd,
+    take: 100,
+  });
+
+  if (!listed.ok) return [];
+
+  const hours = new Set<number>();
+  for (const b of listed.bookings) {
+    if (!b.start) continue;
+    if (dateKeyFromSlotIso(b.start) !== date) continue;
+    const hour = hourFromCalSlot(b.start);
+    if (hour !== null && (SLOT_HOURS as readonly number[]).includes(hour)) {
+      hours.add(hour);
+    }
+  }
+  return [...hours];
+}
+
+/** Upcoming Cal bookings that appear to belong to this PH mobile. */
+export async function findCalBookingsForPhone(
+  phone: string
+): Promise<CalListedBooking[]> {
+  const normalized = normalizePhMobile(phone);
+  const suffix = phoneLookupSuffix(phone);
+  if (!normalized && !suffix) return [];
+
+  const listed = await listCalBookings({ status: "upcoming", take: 100 });
+  if (!listed.ok) return [];
+
+  const e164 = toPhE164(phone);
+  const synthetic = normalized
+    ? `booking+${normalized}@bookings.brightsmile.ph`
+    : null;
+
+  return listed.bookings.filter((b) => {
+    if (
+      calBookingMatchesAttendee(b, {
+        phone: e164,
+        email: synthetic ?? undefined,
+      })
+    ) {
+      return true;
+    }
+    if (suffix && b.attendeeEmail?.includes(`booking+${suffix}@`)) return true;
+    if (
+      suffix &&
+      b.attendeePhone &&
+      phoneLookupSuffix(b.attendeePhone) === suffix
+    ) {
+      return true;
+    }
+    return false;
+  });
 }
 
 export const BOOKING_CONFIRMED_EVENT = "dental:booking-confirmed";

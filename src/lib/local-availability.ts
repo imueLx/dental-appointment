@@ -1,11 +1,16 @@
 import { addDays, eachDayOfInterval, parseISO } from "date-fns";
-import { buildBookingStartIso, getClinicTimeZone } from "@/lib/cal";
+import {
+  buildBookingStartIso,
+  getCalBookedHoursForDate,
+  getClinicTimeZone,
+} from "@/lib/cal";
 import { getBookedSlots } from "@/lib/appointments";
 import { getSupabaseServiceKey, getSupabaseUrl } from "@/lib/env";
 import {
   BOOKING_WINDOW_DAYS,
   formatDateKey,
   generateDaySlots,
+  hourToTimeString,
   isBookableCalendarDay,
   isSlotBookable,
   SLOT_HOURS,
@@ -27,7 +32,7 @@ export function buildSlotTimesForHours(
   );
 }
 
-/** Open clinic hours for one date (local rules − Supabase confirmed bookings). */
+/** Open clinic hours for one date (local rules − Supabase − Cal.com bookings). */
 export async function getOpenHoursForDate(
   date: string,
   timeZone: string = getClinicTimeZone()
@@ -41,7 +46,17 @@ export async function getOpenHoursForDate(
     return { availableHours: [], slotTimes: {}, bookedSlots: [] };
   }
 
-  const bookedSlots = await getBookedSlots(date, date);
+  const [dbBooked, calHours] = await Promise.all([
+    getBookedSlots(date, date),
+    getCalBookedHoursForDate(date).catch(() => [] as number[]),
+  ]);
+
+  const calAsSlots: BookedSlot[] = calHours.map((hour) => ({
+    appointment_date: date,
+    start_time: hourToTimeString(hour),
+  }));
+
+  const bookedSlots = [...dbBooked, ...calAsSlots];
   const availableHours = generateDaySlots(day).filter((hour) =>
     isSlotBookable(day, hour, bookedSlots)
   );

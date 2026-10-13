@@ -57,6 +57,7 @@ export function bookingToDbRow(data: BookingFormData) {
     patient_phone: data.patientPhone,
     service: data.service,
     notes: noteParts.join("\n"),
+    clinic_location_id: data.clinicLocationId,
     status: "confirmed" as const,
   };
 }

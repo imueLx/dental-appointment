@@ -7,8 +7,8 @@ import {
 } from "@/lib/local-availability";
 
 /**
- * Fast availability for one date: clinic hours − Supabase bookings.
- * Does not call Cal.com slots API (avoids PH → US latency).
+ * Availability for one date: clinic hours − Supabase − existing Cal.com bookings.
+ * Keeps /book and chat availability aligned when orphans exist only on Cal.
  */
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");

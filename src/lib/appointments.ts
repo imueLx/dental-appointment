@@ -14,7 +14,7 @@ export async function getBookedSlots(
     const query = supabase
       .from("appointments")
       .select("appointment_date, start_time")
-      .eq("status", "confirmed")
+      .in("status", ["confirmed", "pending"])
       .gte("appointment_date", from)
       .lte("appointment_date", to);
 
